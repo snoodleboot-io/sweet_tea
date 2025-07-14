@@ -1,6 +1,6 @@
 [project]
 name = "sweet-tea"
-version = "0.1.0"
+version = "0.1.1"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
@@ -11,3 +11,8 @@ dependencies = [
 dev = [
     "black>=25.1.0",
 ]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

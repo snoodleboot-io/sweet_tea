@@ -19,7 +19,7 @@ from sweet_tea.sweet_tea_error import SweetTeaError
 
 
 class Factory:
-    __registry: Registry
+    __registry: Registry = Registry
 
     __logger = logging.getLogger()
 
@@ -47,7 +47,7 @@ class Factory:
             ValueError: When key is invalid.
         """
         # Find all entries which have the specified key value.
-        entries = [entry for entry in cls.__registry if entry.key == key.lower()]
+        entries = [entry for entry in cls.__registry.entries() if entry.key == key.lower()]
         if len(entries) == 0:
             error_message = f"The key {key} not present."
             cls.__logger.error(error_message)
