@@ -1,0 +1,13 @@
+[project]
+name = "sweet-tea"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.11.7",
+]
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+]
