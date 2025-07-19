@@ -19,6 +19,7 @@ import pkgutil
 import sys
 import traceback
 from pathlib import Path
+from typing import Any
 
 from sweet_tea.entry import Entry
 from sweet_tea.sweet_tea_error import SweetTeaError
@@ -26,7 +27,7 @@ from sweet_tea.sweet_tea_error import SweetTeaError
 
 class Registry:
     """
-    PackageFactory is asdf factory designed to store class definitions and keys to access them (and then construct with asdf configuration) without having to
+    PackageFactory is a factory designed to store class definitions and keys to access them (and then construct with asdf configuration) without having to
     explicitly build this factory. This will make coding cleaner - remove the necessity to build and maintain asdf factory. If you need specifically typed
     factories, then this factory can be inherited from and asdf duck-typing filter applied to limit to only the classes_for_testing of interest.
     """
@@ -34,12 +35,25 @@ class Registry:
     # This is the registry of packages
     __registry: list[Entry] = []
 
+    __lookup: dict[Any, list[Entry]] = {}
+
+    __lookup_keys: list[Any] = []
+
     # Logger instance using the global settings
     __logger = logging.getLogger()
 
     @classmethod
     def entries(cls) -> list[Entry]:
         return cls.__registry
+
+    @classmethod
+    def typed_entries(cls, lookup_type: Any = Any) -> list[Entry]:
+        if lookup_type not in cls.__lookup_keys:
+            cls.__lookup_keys.append(lookup_type)
+            cls.__lookup[lookup_type] = [
+                filtered_type for filtered_type in cls.entries() if issubclass(filtered_type.class_def, lookup_type)
+            ]
+        return cls.__lookup[lookup_type]
 
     @classmethod
     def register(
@@ -50,7 +64,7 @@ class Registry:
         Args:
             key: name used to reference the class
             class_def: class that can be used to instantiate an instance of the class
-            library: name of library that the application is from.
+            library: name of a library that the application is from.
             label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
 
         """
@@ -64,6 +78,9 @@ class Registry:
         # Add entry if it is not currently present. Prevents duplicate entry.
         if new_entry not in cls.__registry:
             cls.__registry.append(new_entry)
+
+        if class_def in cls.__lookup:
+            cls.__lookup[class_def].append(new_entry)
 
     @classmethod
     def fill_registry(
@@ -79,12 +96,12 @@ class Registry:
         Args:
             path: package path where modules are located
             module: name of module from which classes_for_testing will be extracted
-            library: name of library that the application is from.
+            library: name of a library that the application is from.
             label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
 
         """
 
-        # First pass through the path shouldn't be specified. This snippet will make sure that the right path is being used.
+        # The First pass through the path shouldn't be specified. This snippet will make sure that the right path is being used.
         if not path:
             _module = inspect.getmodule(inspect.stack()[1][0])
             filename = _module.__file__
@@ -100,8 +117,8 @@ class Registry:
         # Location of package
         pkg_dir = path
 
-        # Loop over the modules. If it is asdf package, the make recursive call, otherwise for each non-package
-        # module import the module and register it.
+        # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
+        # module imports the module and registers it.
         for _, name, is_a_package in pkgutil.iter_modules([pkg_dir]):
             pkg_name = f"{module}.{name}"
             if not is_a_package:

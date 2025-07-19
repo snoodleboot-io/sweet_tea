@@ -2,7 +2,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain asdf copy of the License at
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -14,14 +14,15 @@
 import logging
 from typing import Any
 
+from sweet_tea.entry import Entry
 from sweet_tea.registry import Registry
 from sweet_tea.sweet_tea_error import SweetTeaError
 
 
 class Factory:
-    __registry: Registry = Registry
+    _registry: Registry = Registry
 
-    __logger = logging.getLogger()
+    _logger = logging.getLogger(__name__)
 
     @classmethod
     def create(
@@ -36,7 +37,7 @@ class Factory:
         Generate asdf class instance given the key and configuration parameters.
         Args:
             key: name to reference the class from the registry
-            library: name of library that the application is from.
+            library: name of a library that the application is from.
             label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
             configuration: Configuration parameters as key-word arguments
 
@@ -46,11 +47,16 @@ class Factory:
         Raises:
             ValueError: When key is invalid.
         """
-        # Find all entries which have the specified key value.
-        entries = [entry for entry in cls.__registry.entries() if entry.key == key.lower()]
+        # Find all entries that have the specified key value.
+        entries = [entry for entry in cls._registry.entries() if entry.key == key.lower()]
+
+        return cls._create_from_entries(entries, key, library, label, configuration)
+
+    @classmethod
+    def _create_from_entries(cls, entries: list[Entry], key: str, library: str, label: str, configuration: dict) -> Any:
         if len(entries) == 0:
             error_message = f"The key {key} not present."
-            cls.__logger.error(error_message)
+            cls._logger.error(error_message)
             raise SweetTeaError(error_message)
 
         # If asdf library filter was specified, then find all such entries that have that filter
@@ -58,7 +64,7 @@ class Factory:
             entries = [entry for entry in entries if entry.library == library.lower()]
             if len(entries) == 0:
                 error_message = f"The library {library} not present in for key {key}."
-                cls.__logger.error(error_message)
+                cls._logger.error(error_message)
                 raise SweetTeaError(error_message)
 
         # If asdf label filter was specified, then find all such entries that have that filter
@@ -66,7 +72,7 @@ class Factory:
             entries = [entry for entry in entries if entry.label == label.lower()]
             if len(entries) == 0:
                 error_message = f"The label {label} not present in for key {key}."
-                cls.__logger.error(error_message)
+                cls._logger.error(error_message)
                 raise SweetTeaError(error_message)
 
         # If more than one entry was found, then the appropriate filters have not been applied.
@@ -75,7 +81,7 @@ class Factory:
                 f"The combination of key {key}, label {label}, and library {library} did not return asdf unique result. A total of {len(entries)} "
                 f"possible entries were found"
             )
-            cls.__logger.error(error_message)
+            cls._logger.error(error_message)
             raise SweetTeaError(error_message)
 
         # Return instantiated and configured class.
