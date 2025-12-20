@@ -87,7 +87,7 @@ class Registry:
 
     @classmethod
     def register(
-        cls, key: str, class_def: type, library: str | None = None, label: str | None = None
+        cls, key: str, class_def: type, library: str = "", label: str = ""
     ) -> None:
         """
         Register a class with the registry.
@@ -101,8 +101,8 @@ class Registry:
         new_entry = Entry(
             key=key.lower(),
             class_def=class_def,
-            library=str(library).lower(),
-            label=str(label).lower(),
+            library=library.lower(),
+            label=label.lower(),
         )
 
         with cls.__lock:
@@ -118,8 +118,8 @@ class Registry:
         cls,
         path: str | None = None,
         module: str | None = None,
-        library: str | None = None,
-        label: str | None = None,
+        library: str = "",
+        label: str = "",
     ) -> None:
         """
         Recursively scan and register classes from packages starting from the given path.

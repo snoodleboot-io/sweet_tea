@@ -73,19 +73,18 @@ class TestEntry(TestCase):
         self.assertIn("test", str_repr)
         self.assertIn("TestClass", str_repr)
 
-    def test_entry_with_none_values(self):
-        """Test Entry with None values for optional fields."""
+    def test_entry_with_empty_string_defaults(self):
+        """Test Entry with default empty string values for optional fields."""
         class TestClass:
             pass
 
         entry = Entry(
             key="test",
-            class_def=TestClass,
-            library=None,
-            label=None
+            class_def=TestClass
+            # library and label will default to ""
         )
 
         self.assertEqual(entry.key, "test")
         self.assertEqual(entry.class_def, TestClass)
-        self.assertIsNone(entry.library)
-        self.assertIsNone(entry.label)
+        self.assertEqual(entry.library, "")
+        self.assertEqual(entry.label, "")

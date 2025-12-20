@@ -1,4 +1,4 @@
-# Modifications © 2020 snoodleboot, LLC
+#3 Modifications © 2020 snoodleboot, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 """
 Registry entry model for storing class registration information.
 """
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Entry(BaseModel):
@@ -25,14 +25,23 @@ class Entry(BaseModel):
     including metadata for filtering and instantiation.
     """
 
-    key: str
-    """Lowercase key used to reference this class for instantiation."""
+    key: str = Field(
+        description="Lowercase key used to reference this class for instantiation",
+        examples=["myclass", "databaseconnection"]
+    )
 
-    class_def: type
-    """The actual class type that can be instantiated."""
+    class_def: type = Field(
+        description="The actual class type that can be instantiated"
+    )
 
-    library: str | None
-    """Name of the library or module group this class belongs to."""
+    library: str = Field(
+        default="",
+        description="Name of the library or module group this class belongs to",
+        examples=["mylib", "database"]
+    )
 
-    label: str | None
-    """Optional label for categorizing classes (e.g., by environment or feature set)."""
+    label: str = Field(
+        default="",
+        description="Optional label for categorizing classes (e.g., by environment or feature set)",
+        examples=["production", "testing", "v2"]
+    )
