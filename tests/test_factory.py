@@ -145,6 +145,39 @@ class TestFactory(TestCase):
         self.assertIsInstance(instance1, TestClass)
         self.assertIsInstance(instance2, TestClass)
 
+    def test_key_variations(self):
+        """Test that factory supports multiple key variations for class names."""
+        class MyTestClass:
+            def __init__(self, value="test"):
+                self.value = value
+
+        # Register with the canonical snake_case key
+        Registry.register("my_test_class", MyTestClass)
+
+        # Test different variations of the key that should all resolve to the same entry
+        instance1 = Factory.create("my_test_class")  # exact match
+        instance2 = Factory.create("MyTestClass")    # CamelCase -> should find my_test_class
+
+        # All should create instances of the same class
+        for instance in [instance1, instance2]:
+            self.assertIsInstance(instance, MyTestClass)
+            self.assertEqual(instance.value, "test")
+
+    def test_generate_key_variations(self):
+        """Test the key variation generation logic."""
+        variations = Factory._generate_key_variations("MyClass")
+
+        # Should include various forms
+        self.assertIn("myclass", variations)      # lowercase
+        self.assertIn("my_class", variations)     # snake_case
+        self.assertIn("myclass", variations)      # no underscores
+
+        # Test with existing underscores
+        variations2 = Factory._generate_key_variations("my_test_class")
+        self.assertIn("my_test_class", variations2)  # original
+        self.assertIn("mytestclass", variations2)     # no underscores
+        self.assertIn("my_test_class", variations2)   # should be unique
+
     def test_sweet_tea_error_str_methods(self):
         """Test SweetTeaError string representation methods."""
         from sweet_tea.sweet_tea_error import SweetTeaError

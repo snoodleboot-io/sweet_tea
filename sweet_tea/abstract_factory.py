@@ -71,5 +71,13 @@ class AbstractFactory(Generic[T], Factory):
             SweetTeaError: When the key is not found or filters don't match.
         """
         # Find all entries that have the specified key value and match the generic type
-        entries = [entry for entry in cls._registry.typed_entries(lookup_type=cls._get_generic_type()) if entry.key == key.lower()]
+        entries = []
+        key_variations = cls._generate_key_variations(key)
+        typed_entries = cls._registry.typed_entries(lookup_type=cls._get_generic_type())
+
+        for variation in key_variations:
+            entries.extend([entry for entry in typed_entries if entry.key == variation])
+            if entries:  # Found entries with this variation
+                break
+
         return cls._create_from_entries(entries, key, library, label, configuration)
