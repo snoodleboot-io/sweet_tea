@@ -31,8 +31,8 @@ class Entry(BaseModel):
     class_def: type
     """The actual class type that can be instantiated."""
 
-    library: str
+    library: str | None
     """Name of the library or module group this class belongs to."""
 
-    label: str
+    label: str | None
     """Optional label for categorizing classes (e.g., by environment or feature set)."""

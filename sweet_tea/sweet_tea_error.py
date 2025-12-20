@@ -35,6 +35,6 @@ class SweetTeaError(Exception):
 
     def __str__(self) -> str:
         """Return string representation of the error."""
-        if self.message:
+        if self.message is not None:
             return f"SweetTeaError: {self.message}"
         return "SweetTeaError has been raised"
