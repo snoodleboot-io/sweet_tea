@@ -15,14 +15,18 @@
 
 class SweetTeaError(Exception):
     """
-    Error class for sweet_tea library.
+    Exception raised for errors in the sweet_tea factory system.
+
+    This includes cases like missing keys, ambiguous matches, or
+    other factory-related configuration issues.
     """
 
     def __init__(self, *args):
         """
-        Construct SweetTeaError
+        Initialize SweetTeaError.
+
         Args:
-            *args: Expected at most length 1. Will be error message if provided.
+            *args: Variable arguments. If provided, the first argument is used as the error message.
         """
         if args:
             self.message = args[0]
@@ -30,7 +34,7 @@ class SweetTeaError(Exception):
             self.message = None
 
     def __str__(self) -> str:
+        """Return string representation of the error."""
         if self.message:
-            return "SweetTeaError, {0} ".format(self.message)
-
-        return "SweetTeaError` has been raised"
+            return f"SweetTeaError: {self.message}"
+        return "SweetTeaError has been raised"

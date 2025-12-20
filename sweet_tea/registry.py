@@ -18,18 +18,25 @@ import os
 import pkgutil
 import sys
 import traceback
+import warnings
 from pathlib import Path
 from typing import Any
 
 from sweet_tea.entry import Entry
 from sweet_tea.sweet_tea_error import SweetTeaError
+from sweet_tea.sweet_tea_warning import SweetTeaWarning
 
 
 class Registry:
     """
-    PackageFactory is a factory designed to store class definitions and keys to access them (and then construct with asdf configuration) without having to
-    explicitly build this factory. This will make coding cleaner - remove the necessity to build and maintain asdf factory. If you need specifically typed
-    factories, then this factory can be inherited from and asdf duck-typing filter applied to limit to only the classes_for_testing of interest.
+    Global registry for class definitions that can be instantiated via factories.
+
+    This registry automatically discovers and registers classes from packages,
+    supporting optional dependencies that may not be installed. Classes with
+    missing dependencies are skipped with a warning rather than failing registration.
+
+    The registry supports typed lookups for abstract factories, allowing filtering
+    by inheritance hierarchy.
     """
 
     # This is the registry of packages
@@ -44,10 +51,20 @@ class Registry:
 
     @classmethod
     def entries(cls) -> list[Entry]:
+        """Get all registered entries."""
         return cls.__registry
 
     @classmethod
     def typed_entries(cls, lookup_type: Any = Any) -> list[Entry]:
+        """
+        Get entries that are subclasses of the specified type.
+
+        Args:
+            lookup_type: The base class to filter by. Defaults to Any.
+
+        Returns:
+            List of entries where the class_def is a subclass of lookup_type.
+        """
         if lookup_type not in cls.__lookup_keys:
             cls.__lookup_keys.append(lookup_type)
             cls.__lookup[lookup_type] = [
@@ -57,16 +74,16 @@ class Registry:
 
     @classmethod
     def register(
-        cls, key: str, class_def: type, library: str = None, label: str = None
+        cls, key: str, class_def: type, library: str | None = None, label: str | None = None
     ) -> None:
         """
-        Register asdf class with the factory.
-        Args:
-            key: name used to reference the class
-            class_def: class that can be used to instantiate an instance of the class
-            library: name of a library that the application is from.
-            label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
+        Register a class with the registry.
 
+        Args:
+            key: Name used to reference the class for instantiation.
+            class_def: The class type to register.
+            library: Name of the library the class belongs to.
+            label: Optional label for categorizing classes (e.g., for different environments).
         """
         new_entry = Entry(
             key=key.lower(),
@@ -85,20 +102,23 @@ class Registry:
     @classmethod
     def fill_registry(
         cls,
-        path: str = None,
-        module: str = None,
-        library: str = None,
-        label: str = None,
+        path: str | None = None,
+        module: str | None = None,
+        library: str | None = None,
+        label: str | None = None,
     ) -> None:
         """
-        Recursive method designed to start from the root path and recursively build
-        out the entire registry of classes_for_testing from that depth downward for the PackageFactory.
-        Args:
-            path: package path where modules are located
-            module: name of module from which classes_for_testing will be extracted
-            library: name of a library that the application is from.
-            label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
+        Recursively scan and register classes from packages starting from the given path.
 
+        This method automatically discovers all classes in the package hierarchy,
+        supporting optional dependencies by gracefully skipping modules that fail
+        to import due to missing packages.
+
+        Args:
+            path: Package path where modules are located. If None, uses the caller's module path.
+            module: Name of the root module. If None, inferred from path.
+            library: Name of the library for categorization.
+            label: Optional label for categorizing classes.
         """
 
         # The First pass through the path shouldn't be specified. This snippet will make sure that the right path is being used.
@@ -140,14 +160,18 @@ class Registry:
         cls, label: str, library: str, name_of_package: str
     ) -> None:
         """
+        Import a module and register all classes defined in it.
+
+        Handles optional dependencies by issuing warnings for ImportError/ModuleNotFoundError
+        and continuing, while raising SweetTeaError for other exceptions.
 
         Args:
-            library: name of library that the application is from.
-            label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
-            name_of_package: Name of the package
+            label: Optional label for categorizing classes.
+            library: Name of the library the classes belong to.
+            name_of_package: Full module name to import and scan.
 
         Raises:
-            ProvidahError
+            SweetTeaError: For non-import related errors during module processing.
         """
         try:
             # exec("import " + name_of_package)
@@ -166,12 +190,18 @@ class Registry:
                     label=label,
                 )
 
+        except (ImportError, ModuleNotFoundError):
+            # Optional dependency not installed - issue warning and skip this module
+            warnings.warn(
+                f"Skipping module {name_of_package} due to missing optional dependency",
+                SweetTeaWarning,
+                stacklevel=2
+            )
+            # Continue without registering this module
         except Exception:
-            # Something seems to have gone wrong. Let's log it and let there be asdf failure. Silently
-            # continuing would make it hard to track where asdf potential/likely issue in the package
-            # or in the consuming application for which classes_for_testing are being extracted.
+            # Other errors (e.g., syntax errors, runtime errors) should still fail
             error_message = traceback.format_exc()
-            cls.__logger.error(error_message)
+            cls.__logger.error(f"Error processing module {name_of_package}: {error_message}")
             raise SweetTeaError(error_message)
 
     @classmethod
@@ -179,14 +209,18 @@ class Registry:
         cls, label: str, library: str, name_of_package: str
     ) -> None:
         """
+        Legacy method to register classes from a module using exec-based import.
+
+        This method is deprecated in favor of __add_entry_to_registry2 which uses
+        importlib for better error handling.
 
         Args:
-            library: name of library that the class is from.
-            label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
-            name_of_package: Name of the package
+            label: Optional label for categorizing classes.
+            library: Name of the library the classes belong to.
+            name_of_package: Full module name to import and scan.
 
         Raises:
-            ProvidahError
+            SweetTeaError: For any errors during module processing.
         """
         try:
             exec("import " + name_of_package)

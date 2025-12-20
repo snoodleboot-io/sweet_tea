@@ -11,50 +11,65 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, TypeVar, Generic
+"""
+Abstract factory implementation with generic type constraints.
+
+This factory allows instantiation of classes that are subclasses of a specified
+generic type, enabling type-safe factory patterns.
+"""
+from typing import Any, TypeVar, Generic, Type
 
 from sweet_tea.factory import Factory
 
 T = TypeVar('T')
 
 class AbstractFactory(Generic[T], Factory):
+    """
+    A generic factory that constrains instantiation to subclasses of type T.
+
+    Usage:
+        factory = AbstractFactory[MyBaseClass]
+        instance = factory.create('my_key')
+        # Only classes inheriting from MyBaseClass will be available
+    """
 
     _type = T
 
-    def __class_getitem__(cls, item):
-        # This is called when you do AdvancedTypedContainer[str]
-        result = super().__class_getitem__(item)
+    @classmethod
+    def __class_getitem__(cls, item: Type[T]) -> Type["AbstractFactory[T]"]:
+        """Create a parameterized generic subclass with the specified type."""
+        result = super().__class_getitem__(item)  # type: ignore[attr-defined]
         result._type = item
         return result
 
     @classmethod
-    def get_generic_type(cls):
-        """Get the generic type if available"""
-        return getattr(cls, '_type', None)
+    def _get_generic_type(cls) -> Type[T]:
+        """Get the generic type parameter."""
+        return cls._type
 
     @classmethod
     def create(
         cls,
         key: str,
-        library: str = None,
-        label: str = None,
-        configuration: dict = None,
-
+        library: str | None = None,
+        label: str | None = None,
+        configuration: dict | None = None,
     ) -> Any:
         """
-        Generate asdf class instance given the key and configuration parameters.
+        Create an instance of a registered class that is a subclass of the generic type.
+
         Args:
-            key: name to reference the class from the registry
-            library: name of a library that the application is from.
-            label: label used to identify asdf class - possible linked to asdf monkey-patched version or asdf sub-application specific class.
-            configuration: Configuration parameters as key-word arguments
+            key: Name to reference the class from the registry.
+            library: Optional library filter for the class.
+            label: Optional label filter for the class.
+            configuration: Configuration parameters as keyword arguments.
 
         Returns:
-            Configured instance of class requested.
+            Configured instance of the requested class.
 
         Raises:
-            ValueError: When key is invalid.
+            SweetTeaError: When the key is not found or filters don't match.
         """
-        # Find all entries that have the specified key value.
-        entries = [entry for entry in cls._registry.typed_entries(lookup_type=cls.get_generic_type()) if entry.key == key.lower()]
+        # Find all entries that have the specified key value and match the generic type
+        entries = [entry for entry in cls._registry.typed_entries(lookup_type=cls._get_generic_type()) if entry.key == key.lower()]
         return cls._create_from_entries(entries, key, library, label, configuration)

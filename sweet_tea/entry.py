@@ -11,15 +11,28 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+Registry entry model for storing class registration information.
+"""
 from pydantic import BaseModel
 
 
 class Entry(BaseModel):
     """
-    Registry entry.
+    A registry entry containing information about a registered class.
+
+    Each entry represents a class that has been registered with the factory system,
+    including metadata for filtering and instantiation.
     """
 
     key: str
+    """Lowercase key used to reference this class for instantiation."""
+
     class_def: type
+    """The actual class type that can be instantiated."""
+
     library: str
+    """Name of the library or module group this class belongs to."""
+
     label: str
+    """Optional label for categorizing classes (e.g., by environment or feature set)."""
