@@ -17,6 +17,7 @@ import logging
 import os
 import pkgutil
 import sys
+import threading
 import traceback
 import warnings
 from pathlib import Path
@@ -37,7 +38,13 @@ class Registry:
 
     The registry supports typed lookups for abstract factories, allowing filtering
     by inheritance hierarchy.
+
+    Thread-safe: All registry operations are synchronized to prevent race conditions
+    in multi-threaded environments.
     """
+
+    # Threading lock for synchronizing registry operations
+    __lock = threading.RLock()
 
     # This is the registry of packages
     __registry: list[Entry] = []
@@ -52,7 +59,8 @@ class Registry:
     @classmethod
     def entries(cls) -> list[Entry]:
         """Get all registered entries."""
-        return cls.__registry
+        with cls.__lock:
+            return cls.__registry.copy()
 
     @classmethod
     def typed_entries(cls, lookup_type: Any = Any) -> list[Entry]:
@@ -65,12 +73,13 @@ class Registry:
         Returns:
             List of entries where the class_def is a subclass of lookup_type.
         """
-        if lookup_type not in cls.__lookup_keys:
-            cls.__lookup_keys.append(lookup_type)
-            cls.__lookup[lookup_type] = [
-                filtered_type for filtered_type in cls.entries() if issubclass(filtered_type.class_def, lookup_type)
-            ]
-        return cls.__lookup[lookup_type]
+        with cls.__lock:
+            if lookup_type not in cls.__lookup_keys:
+                cls.__lookup_keys.append(lookup_type)
+                cls.__lookup[lookup_type] = [
+                    filtered_type for filtered_type in cls.__registry if issubclass(filtered_type.class_def, lookup_type)
+                ]
+            return cls.__lookup[lookup_type].copy()
 
     @classmethod
     def register(
@@ -92,12 +101,13 @@ class Registry:
             label=str(label).lower(),
         )
 
-        # Add entry if it is not currently present. Prevents duplicate entry.
-        if new_entry not in cls.__registry:
-            cls.__registry.append(new_entry)
+        with cls.__lock:
+            # Add entry if it is not currently present. Prevents duplicate entry.
+            if new_entry not in cls.__registry:
+                cls.__registry.append(new_entry)
 
-        if class_def in cls.__lookup:
-            cls.__lookup[class_def].append(new_entry)
+            if class_def in cls.__lookup:
+                cls.__lookup[class_def].append(new_entry)
 
     @classmethod
     def fill_registry(
@@ -120,40 +130,39 @@ class Registry:
             library: Name of the library for categorization.
             label: Optional label for categorizing classes.
         """
+        with cls.__lock:
+            # The First pass through the path shouldn't be specified. This snippet will make sure that the right path is being used.
+            if not path:
+                _module = inspect.getmodule(inspect.stack()[1][0])
+                filename = _module.__file__
+                path = Path(filename).parent
 
-        # The First pass through the path shouldn't be specified. This snippet will make sure that the right path is being used.
-        if not path:
-            _module = inspect.getmodule(inspect.stack()[1][0])
-            filename = _module.__file__
-            path = Path(filename).parent
+            # Make sure the root module is correctly specified
+            if not module:
+                module = os.path.basename(path)
 
-        # Make sure the root module is correctly specified
-        if not module:
-            module = os.path.basename(path)
+            if not library:
+                library = module
 
-        if not library:
-            library = module
+            # Location of package
+            pkg_dir = path
 
-        # Location of package
-        pkg_dir = path
-
-        # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
-        # module imports the module and registers it.
-        for _, name, is_a_package in pkgutil.iter_modules([pkg_dir]):
-            pkg_name = f"{module}.{name}"
-            if not is_a_package:
-
-                cls.__add_entry_to_registry2(
-                    label=label, library=library, name_of_package=pkg_name
-                )
-            else:
-                # Make recursive call to the
-                cls.fill_registry(
-                    path=os.path.join(pkg_dir, name),
-                    module=pkg_name,
-                    library=library,
-                    label=label,
-                )
+            # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
+            # module imports the module and registers it.
+            for _, name, is_a_package in pkgutil.iter_modules([pkg_dir]):
+                pkg_name = f"{module}.{name}"
+                if not is_a_package:
+                    cls.__add_entry_to_registry2(
+                        label=label, library=library, name_of_package=pkg_name
+                    )
+                else:
+                    # Make recursive call to the
+                    cls.fill_registry(
+                        path=os.path.join(pkg_dir, name),
+                        module=pkg_name,
+                        library=library,
+                        label=label,
+                    )
 
     @classmethod
     def __add_entry_to_registry2(
