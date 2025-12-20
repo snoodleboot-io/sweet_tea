@@ -1,11 +1,12 @@
 """
 Tests for the Registry class functionality.
 """
+
 import threading
 import time
 from unittest import TestCase
+
 from sweet_tea.registry import Registry
-from sweet_tea.entry import Entry
 
 
 class TestRegistry(TestCase):
@@ -19,6 +20,7 @@ class TestRegistry(TestCase):
 
     def test_register_and_entries(self):
         """Test registering classes and retrieving entries."""
+
         # Register a test class
         class TestClass:
             pass
@@ -34,6 +36,7 @@ class TestRegistry(TestCase):
 
     def test_register_duplicate(self):
         """Test that duplicate entries are not added."""
+
         class TestClass:
             pass
 
@@ -45,6 +48,7 @@ class TestRegistry(TestCase):
 
     def test_typed_entries(self):
         """Test filtering entries by type."""
+
         class BaseClass:
             pass
 
@@ -72,6 +76,7 @@ class TestRegistry(TestCase):
 
     def test_case_insensitive_keys(self):
         """Test that keys are stored in lowercase."""
+
         class TestClass:
             pass
 
@@ -89,9 +94,13 @@ class TestRegistry(TestCase):
                 for i in range(10):
                     class_name = f"TestClass_{thread_id}_{i}"
                     TestClass = type(class_name, (), {})
-                    Registry.register(f"key_{thread_id}_{i}", TestClass, f"lib_{thread_id}")
+                    Registry.register(
+                        f"key_{thread_id}_{i}", TestClass, f"lib_{thread_id}"
+                    )
                     results.append(f"{thread_id}_{i}")
-                    time.sleep(0.001)  # Small delay to increase chance of race conditions
+                    time.sleep(
+                        0.001
+                    )  # Small delay to increase chance of race conditions
             except Exception as e:
                 errors.append(str(e))
 
@@ -122,44 +131,38 @@ class TestRegistry(TestCase):
         # This test demonstrates the overall registry filling and factory usage
         # It serves as an integration test showing the system working end-to-end
 
-        # Note: In normal operation, fill_registry would be called automatically
-        # by importing the classes_for_testing package. For this test, we simulate it.
-
         # Clear registry first
         Registry._Registry__registry.clear()
         Registry._Registry__lookup.clear()
         Registry._Registry__lookup_keys.clear()
 
-        # The actual fill_registry call happens when importing classes_for_testing
-        # For testing purposes, we can verify the registry has entries after import
-        import classes_for_testing
+        # Register some test classes manually to verify the system works
+        class TestClassA:
+            def print(self):
+                return "Class A"
 
-        # Verify we have some entries registered
+        class TestClassB(TestClassA):
+            pass
+
+        Registry.register("a", TestClassA)
+        Registry.register("b", TestClassB)
+
+        # Verify we have entries registered
         entries = Registry.entries()
-        self.assertGreater(len(entries), 0, "Registry should have entries after fill_registry")
+        self.assertEqual(len(entries), 2, "Should have 2 manually registered entries")
 
         # Verify we can create instances using the factories
-        from sweet_tea.factory import Factory
         from sweet_tea.abstract_factory import AbstractFactory
+        from sweet_tea.factory import Factory
 
-        # Test basic factory creation (if 'a' key exists)
-        try:
-            instance_a = Factory.create(key='a', configuration={})
-            self.assertIsNotNone(instance_a)
-            # Should have a print method
-            self.assertTrue(hasattr(instance_a, 'print'))
-        except Exception:
-            # If 'a' doesn't exist, that's okay - the registry filling may vary
-            pass
+        # Test basic factory creation
+        instance_a = Factory.create(key="a", configuration={})
+        self.assertIsNotNone(instance_a)
+        self.assertTrue(hasattr(instance_a, "print"))
+        self.assertEqual(instance_a.print(), "Class A")
 
-        # Test abstract factory (if we have classes that inherit from A)
-        try:
-            from classes_for_testing.asdf.a import A
-            abstract_factory = AbstractFactory[A]
-            # Try to create a derived class
-            instance_b = abstract_factory.create(key='b', configuration={})
-            self.assertIsNotNone(instance_b)
-            self.assertIsInstance(instance_b, A)
-        except Exception:
-            # If the classes don't exist or keys aren't registered, that's okay
-            pass
+        # Test abstract factory with type constraints
+        abstract_factory = AbstractFactory[TestClassA]
+        instance_b = abstract_factory.create(key="b", configuration={})
+        self.assertIsNotNone(instance_b)
+        self.assertIsInstance(instance_b, TestClassA)

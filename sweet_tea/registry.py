@@ -16,7 +16,6 @@ import inspect
 import logging
 import os
 import pkgutil
-import sys
 import threading
 import traceback
 import warnings
@@ -81,7 +80,9 @@ class Registry:
                     cls.__lookup[lookup_type] = cls.__registry.copy()
                 else:
                     cls.__lookup[lookup_type] = [
-                        filtered_type for filtered_type in cls.__registry if issubclass(filtered_type.class_def, lookup_type)
+                        filtered_type
+                        for filtered_type in cls.__registry
+                        if issubclass(filtered_type.class_def, lookup_type)
                     ]
             return cls.__lookup[lookup_type].copy()
 
@@ -135,21 +136,25 @@ class Registry:
             label: Optional label for categorizing classes.
         """
         with cls.__lock:
-            # The First pass through the path shouldn't be specified. This snippet will make sure that the right path is being used.
-            if not path:
+            # Determine the path to scan
+            if path is None:
                 _module = inspect.getmodule(inspect.stack()[1][0])
-                filename = _module.__file__
-                path = Path(filename).parent
+                if _module is None or _module.__file__ is None:
+                    raise SweetTeaError("Cannot determine module path automatically")
+                path = str(Path(_module.__file__).parent)
+
+            # Ensure path is a string
+            path_str = str(path)
 
             # Make sure the root module is correctly specified
-            if not module:
-                module = os.path.basename(path)
+            if module is None:
+                module = os.path.basename(path_str)
 
             if not library:
                 library = module
 
             # Location of package
-            pkg_dir = path
+            pkg_dir = path_str
 
             # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
             # module imports the module and registers it.
@@ -195,10 +200,10 @@ class Registry:
                 if obj.__module__ == name_of_package:
                     classes.append((name, obj))
 
-            for cls in classes:
+            for class_name, class_def in classes:
                 Registry.register(
-                    key=cls[0].lower(),
-                    class_def=cls[1],
+                    key=class_name.lower(),
+                    class_def=class_def,
                     library=library,
                     label=label,
                 )
@@ -208,11 +213,13 @@ class Registry:
             warnings.warn(
                 f"Skipping module {name_of_package} due to missing optional dependency",
                 SweetTeaWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             # Continue without registering this module
         except Exception:
             # Other errors (e.g., syntax errors, runtime errors) should still fail
             error_message = traceback.format_exc()
-            cls.__logger.error(f"Error processing module {name_of_package}: {error_message}")
+            cls.__logger.error(
+                f"Error processing module {name_of_package}: {error_message}"
+            )
             raise SweetTeaError(error_message)

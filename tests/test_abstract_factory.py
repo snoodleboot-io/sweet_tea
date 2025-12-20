@@ -1,7 +1,9 @@
 """
 Tests for the AbstractFactory class functionality.
 """
+
 from unittest import TestCase
+
 from sweet_tea.abstract_factory import AbstractFactory
 from sweet_tea.registry import Registry
 from sweet_tea.sweet_tea_error import SweetTeaError
@@ -18,6 +20,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_creation(self):
         """Test creating an abstract factory with type parameter."""
+
         class BaseClass:
             pass
 
@@ -42,6 +45,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_filters_by_type(self):
         """Test that abstract factory only allows subclasses of the generic type."""
+
         class Animal:
             pass
 
@@ -78,6 +82,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_wrong_type(self):
         """Test that abstract factory rejects keys that don't match the type."""
+
         class Animal:
             pass
 
@@ -98,6 +103,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_generic_methods(self):
         """Test the generic type methods."""
+
         class TestClass:
             pass
 
@@ -108,6 +114,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_with_filters(self):
         """Test abstract factory with library/label filters."""
+
         class BaseClass:
             pass
 
@@ -130,6 +137,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_inheritance_hierarchy(self):
         """Test abstract factory with complex inheritance."""
+
         class Vehicle:
             pass
 
@@ -172,6 +180,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_empty_registry(self):
         """Test abstract factory with no matching classes."""
+
         class TestClass:
             pass
 
@@ -184,6 +193,7 @@ class TestAbstractFactory(TestCase):
 
     def test_abstract_factory_multiple_inheritance(self):
         """Test abstract factory with multiple inheritance."""
+
         class Interface1:
             pass
 

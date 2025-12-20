@@ -13,4 +13,4 @@
 # limitations under the License.
 class A:
     def print(self):
-        print('hello world!')
+        print("hello world!")

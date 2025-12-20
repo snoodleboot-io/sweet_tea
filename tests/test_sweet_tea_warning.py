@@ -1,8 +1,10 @@
 """
 Tests for the SweetTeaWarning warning class.
 """
+
 import warnings
 from unittest import TestCase
+
 from sweet_tea.sweet_tea_warning import SweetTeaWarning
 
 

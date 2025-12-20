@@ -17,11 +17,13 @@ Abstract factory implementation with generic type constraints.
 This factory allows instantiation of classes that are subclasses of a specified
 generic type, enabling type-safe factory patterns.
 """
-from typing import Any, TypeVar, Generic, Type
+
+from typing import Any, Generic, Type, TypeVar
 
 from sweet_tea.factory import Factory
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class AbstractFactory(Generic[T], Factory):
     """
@@ -33,13 +35,13 @@ class AbstractFactory(Generic[T], Factory):
         # Only classes inheriting from MyBaseClass will be available
     """
 
-    _type = T
+    _type = T  # type: ignore[misc]
 
     @classmethod
     def __class_getitem__(cls, item: Type[T]) -> Type["AbstractFactory[T]"]:
         """Create a parameterized generic subclass with the specified type."""
-        result = super().__class_getitem__(item)  # type: ignore[attr-defined]
-        result._type = item
+        result = super().__class_getitem__(item)  # type: ignore[attr-defined,misc]
+        result._type = item  # type: ignore[misc]
         return result
 
     @classmethod
@@ -51,9 +53,9 @@ class AbstractFactory(Generic[T], Factory):
     def create(
         cls,
         key: str,
-        library: str | None = None,
-        label: str | None = None,
-        configuration: dict | None = None,
+        library: str = "",
+        label: str = "",
+        configuration: dict[str, Any] | None = None,
     ) -> Any:
         """
         Create an instance of a registered class that is a subclass of the generic type.

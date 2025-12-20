@@ -1,0 +1,56 @@
+repos:
+  # Code formatting
+  - repo: https://github.com/psf/black
+    rev: 25.1.0
+    hooks:
+      - id: black
+        language_version: python3
+
+  # Import sorting (compatible with black)
+  - repo: https://github.com/pycqa/isort
+    rev: 6.0.0
+    hooks:
+      - id: isort
+        args: ["--profile", "black", "--check-only", "--diff"]
+
+  # Fast linter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # Security scanning
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.9.2
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+        exclude: ^tests/
+
+  # Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        args: [--ignore-missing-imports]
+
+  # Build documentation
+  - repo: local
+    hooks:
+      - id: mkdocs
+        name: mkdocs
+        entry: uv run mkdocs build
+        language: system
+        pass_filenames: false
+
+  # Run tests
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+        args: [tests/, --cov=sweet_tea, --cov-report=term-missing]

@@ -1,16 +1,25 @@
 [project]
-name = "sweet-tea"
+name = "sweet_tea"
 version = "0.1.2"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "bandit>=1.9.2",
+    "mypy>=1.19.1",
     "pydantic>=2.12.5",
+    "pydoctest>=0.2.1",
     "pytest-cov>=7.0.0",
+    "ruff>=0.14.10",
 ]
 
 [dependency-groups]
 dev = [
     "black>=25.1.0",
+    "isort>=6.0.0",
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.27.0",
+    "pre-commit>=4.0.0",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
 ]

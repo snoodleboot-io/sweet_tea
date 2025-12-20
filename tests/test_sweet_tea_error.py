@@ -1,7 +1,9 @@
 """
 Tests for the SweetTeaError exception class.
 """
+
 from unittest import TestCase
+
 from sweet_tea.sweet_tea_error import SweetTeaError
 
 

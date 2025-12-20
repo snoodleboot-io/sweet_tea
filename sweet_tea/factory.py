@@ -14,9 +14,10 @@
 """
 Base factory implementation for instantiating registered classes.
 """
+
 import logging
 import re
-from typing import Any, List
+from typing import Any, Type
 
 from sweet_tea.entry import Entry
 from sweet_tea.registry import Registry
@@ -31,7 +32,7 @@ class Factory:
     from the registry with optional filtering by library and label.
     """
 
-    _registry: Registry = Registry
+    _registry: Type[Registry] = Registry
 
     _logger = logging.getLogger(__name__)
 
@@ -39,9 +40,9 @@ class Factory:
     def create(
         cls,
         key: str,
-        library: str | None = None,
-        label: str | None = None,
-        configuration: dict | None = None,
+        library: str = "",
+        label: str = "",
+        configuration: dict[str, Any] | None = None,
     ) -> Any:
         """
         Create an instance of a registered class.
@@ -62,22 +63,31 @@ class Factory:
         entries = []
         key_variations = cls._generate_key_variations(key)
         for variation in key_variations:
-            entries.extend([entry for entry in cls._registry.entries() if entry.key == variation])
+            entries.extend(
+                [entry for entry in cls._registry.entries() if entry.key == variation]
+            )
             if entries:  # Found entries with this variation
                 break
 
         return cls._create_from_entries(entries, key, library, label, configuration)
 
     @classmethod
-    def _create_from_entries(cls, entries: list[Entry], key: str, library: str | None, label: str | None, configuration: dict | None) -> Any:
+    def _create_from_entries(
+        cls,
+        entries: list[Entry],
+        key: str,
+        library: str,
+        label: str,
+        configuration: dict[str, Any] | None,
+    ) -> Any:
         """
         Create an instance from a filtered list of entries.
 
         Args:
             entries: List of candidate entries.
             key: The requested key.
-            library: Optional library filter.
-            label: Optional label filter.
+            library: Library filter (empty string means no filter).
+            label: Label filter (empty string means no filter).
             configuration: Configuration parameters.
 
         Returns:
@@ -122,7 +132,7 @@ class Factory:
         return entries[0].class_def(**configuration)
 
     @classmethod
-    def _generate_key_variations(cls, key: str) -> List[str]:
+    def _generate_key_variations(cls, key: str) -> list[str]:
         """
         Generate key variations for flexible class name matching.
 
@@ -144,9 +154,9 @@ class Factory:
         # Try converting camelCase to snake_case (e.g., "MyClass" -> "my_class")
         def camel_to_snake(s):
             # Insert underscore between lowercase and uppercase
-            s = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
+            s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
             # Insert underscore between uppercase sequences
-            s = re.sub(r'([A-Z])([A-Z][a-z])', r'\1_\2', s)
+            s = re.sub(r"([A-Z])([A-Z][a-z])", r"\1_\2", s)
             return s.lower()
 
         snake_case = camel_to_snake(key)
@@ -154,24 +164,24 @@ class Factory:
             variations.append(snake_case)
 
         # Try removing underscores (e.g., "my_class" -> "myclass")
-        no_underscores = lower_key.replace('_', '')
+        no_underscores = lower_key.replace("_", "")
         if no_underscores not in variations:
             variations.append(no_underscores)
 
         # Try removing "class" suffix (e.g., "myclass" -> "my")
-        if lower_key.endswith('class') and len(lower_key) > 5:
+        if lower_key.endswith("class") and len(lower_key) > 5:
             without_class = lower_key[:-5]
             if without_class not in variations:
                 variations.append(without_class)
 
-        if lower_key.endswith('_class') and len(lower_key) > 6:
+        if lower_key.endswith("_class") and len(lower_key) > 6:
             without_class = lower_key[:-6]
             if without_class not in variations:
                 variations.append(without_class)
 
         # Special case: if the key looks like it should have underscores
         # (consecutive capitals), add that variation
-        if re.search(r'[A-Z]{2,}', key):
+        if re.search(r"[A-Z]{2,}", key):
             with_underscores = camel_to_snake(key)
             if with_underscores not in variations:
                 variations.append(with_underscores)

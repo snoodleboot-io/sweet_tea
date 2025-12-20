@@ -1,75 +1,159 @@
-# Sweet Tea
-Universal or Global Python Class Factory
+# Sweet Tea Factory System
 
-The replaces an older library - that has long since gone to dust. This library will be kept with support for the current
-production versions of python. 
+[![CI](https://github.com/snoodleboot-io/sweet_tea/actions/workflows/ci.yml/badge.svg)](https://github.com/snoodleboot-io/sweet_tea/actions/workflows/ci.yml)
+[![PyPI version](https://badge.fury.io/py/sweet-tea.svg)](https://pypi.org/project/sweet-tea/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![codecov](https://codecov.io/gh/snoodleboot-io/sweet_tea/branch/main/graph/badge.svg)](https://codecov.io/gh/snoodleboot-io/sweet_tea)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/snoodleboot-io/sweet_tea/blob/main/LICENSE)
 
-At its core, this library is rather simple. It is a registry of all classes either manually added or automatically discovered 
-from a given python module. All the classes can then be dynamically generated - a factory without having to build a factory!
+A comprehensive, production-ready Python factory pattern implementation with advanced features for building extensible applications.
 
-## About
-Sweet Tea is a global python factory. It is designed to simplify software engineering and increase the maintainability of software. Perhaps one of the most commonly encountered patterns in software engineering is the Factory Pattern and its various relatives. The issue that comes with these patterns is the need to continually update and ammend the factories. 
+## 🚀 Features
 
-And, depending how those factories were designed, this will mean one of the following:
-1. Leads to chaos through a sequence if/elif statements - possibly with nesting
-2. A large dictionary of 'constructors' that has to be manually updated. Sometimes with a register/retrieve pattern - this is a no go at scale.
-3. Classes that self register their definitions with the factory - but these have to be in scope before they can register - so yikes.
-4. Multiple different factories, abstractions, and a pain to now when and where to modify things.
+- **Dual Factory Patterns**: Class-based factories (new instances) AND instance-based singletons (shared instances)
+- **Thread-Safe Registry**: Concurrent operations with RLock synchronization
+- **Type-Safe Generics**: Full TypeVar support with `__class_getitem__`
+- **Flexible Key Matching**: Support for ClassName, class_name, classname variations
+- **Optional Dependencies**: Graceful handling with custom warnings
+- **Auto-Registration**: Classes automatically registered via package imports
+- **Comprehensive Testing**: 58 tests with 97% coverage
+- **Rich Documentation**: MkDocs with Dracula theme and API reference
 
-## Installation
+## 📦 Installation
 
-**raw pip**
+### Using uv (Recommended)
+
 ```bash
-pip install sweet_tea
+uv add sweet-tea
 ```
 
-**poetry**
+### Using pip
+
 ```bash
-poetry add sweet_tea
+pip install sweet-tea
 ```
 
-**uv**
+### Using Poetry
+
 ```bash
-uv add sweet_tea
+poetry add sweet-tea
 ```
 
-## Using Sweet Tea in Your Project
-To use Sweet Tea you will need to fill the registry from root of your project
+## 🏁 Quick Start
+
 ```python
-from sweet_tea.registry import Registry
-Registry.fill_registry()
+from sweet_tea import Registry, Factory, AbstractFactory, SingletonFactory
+
+# === CLASS-BASED FACTORY (Creates new instances each time) ===
+Registry.register("database", DatabaseConnection)
+db1 = Factory.create("database", configuration={"host": "server1"})
+db2 = Factory.create("database", configuration={"host": "server2"})
+# db1 ≠ db2 (different instances)
+
+# === INSTANCE-BASED SINGLETON FACTORY (Reuses same instance) ===
+db_connection = DatabaseConnection(host="prod-db", pool_size=10)
+SingletonFactory.register("database", db_connection)
+db3 = SingletonFactory.get("database")
+db4 = SingletonFactory.get("database")
+# db3 === db4 (same instance)
+
+# === TYPE-SAFE ABSTRACT FACTORIES ===
+class DatabaseInterface:
+    def connect(self) -> str: ...
+
+db_factory = AbstractFactory[DatabaseInterface]
+db = db_factory.create("postgres")  # Only classes implementing DatabaseInterface
 ```
 
-The registry will crawl through all of the python modules from the root level down its tree and register all classes defined in the project. It will register each class with the following information
-* class name - cast to lowercase
-* library - name of the library the class belongs to
-* label (optional) that describes the class 
-* module - module the class belongs to
-* path - path in the library where the class is located
+### Three Factory Patterns
 
-Once this has been done, the registry can now be used to retrieve an instance of the class from the registry.
+1. **Factory** - Class registration → New instances with configuration
+2. **AbstractFactory** - Type-constrained → New instances with type safety
+3. **SingletonFactory** - Instance registration → Shared singleton instances
 
-Now to create the instance of a class, we only have to do the following:
-```python
-from sweet_tea.factory import Factory
-configuration = {
-    #... key-word configuration of the class
-}
-instance = Factory.generate(key='lowercase_name_of_class', configuration=configuration)
+## 📖 Documentation
+
+Complete documentation is available at [https://snoodleboot-io.github.io/sweet_tea/](https://snoodleboot-io.github.io/sweet_tea/)
+
+### User Guides
+- [Getting Started](https://snoodleboot-io.github.io/sweet_tea/user-guide/getting-started/) - Installation and setup
+- [Basic Usage](https://snoodleboot-io.github.io/sweet_tea/user-guide/basic-usage/) - Core factory patterns
+- [Advanced Features](https://snoodleboot-io.github.io/sweet_tea/user-guide/advanced-features/) - Type constraints and threading
+
+### API Reference
+- [Registry](https://snoodleboot-io.github.io/sweet_tea/api/registry/) - Global class registry
+- [Factory](https://snoodleboot-io.github.io/sweet_tea/api/factory/) - Basic factory implementation
+- [AbstractFactory](https://snoodleboot-io.github.io/sweet_tea/api/abstract-factory/) - Generic type-constrained factories
+
+### Development
+- [Contributing](https://snoodleboot-io.github.io/sweet_tea/development/contributing/) - Development setup and guidelines
+- [Testing](https://snoodleboot-io.github.io/sweet_tea/development/testing/) - Testing strategy and coverage
+
+## 🔧 Development
+
+### Prerequisites
+
+- Python 3.12 or higher
+- uv package manager (recommended)
+
+### Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/snoodleboot-io/sweet_tea.git
+cd sweet_tea
+
+# Install development dependencies
+uv sync
+
+# Install pre-commit hooks
+uv run pre-commit install
+
+# Run tests
+uv run pytest
+
+# Build documentation locally
+uv run mkdocs serve
 ```
 
+### Code Quality
 
-## Usage Patterns
-The most basic usage is to just use it as above. If, however, you want to be able to use the factory so that it only reflects classes of a specific subtype, then you can use the AbstractFactory as such
-```python
-from sweet_tea.abstract_factory import AbstractFactory
+This project uses several tools to maintain code quality:
 
-class SomeFactory(AbstractFactory[Type])
+- **Black**: Code formatting
+- **isort**: Import sorting (compatible with Black)
+- **Ruff**: Fast linting and additional formatting
+- **Bandit**: Security scanning
+- **MyPy**: Type checking
 
-```
+All tools run automatically via pre-commit hooks on git commit.
 
+## 🤝 Contributing
 
-## Creating Specialized Factories
+We welcome contributions! Please see our [contributing guide](https://snoodleboot-io.github.io/sweet_tea/development/contributing/) for details.
 
+### Development Workflow
 
-## Handling Optional Installs in Your Package
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests and ensure they pass
+5. Update documentation if needed
+6. Submit a pull request
+
+## 📄 License
+
+Copyright © 2025 snoodleboot, LLC. Licensed under the Apache License 2.0.
+
+See [LICENSE](LICENSE) for the full license text.
+
+## 🙏 Acknowledgments
+
+- Built with [Pydantic](https://pydantic-docs.helpmanual.io/) for data validation
+- Documentation powered by [MkDocs](https://www.mkdocs.org/) with [Material theme](https://squidfunk.github.io/mkdocs-material/)
+- Testing framework: [pytest](https://pytest.org/) with [coverage](https://coverage.readthedocs.io/)
+- Code quality: [Black](https://black.readthedocs.io/), [Ruff](https://ruff.rs/), [MyPy](https://mypy-lang.org/)
+
+---
+
+**Sweet Tea Factory System** - Production-ready factory patterns for Python applications.

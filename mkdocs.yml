@@ -1,0 +1,77 @@
+site_name: Sweet Tea Factory System
+site_description: A comprehensive Python factory pattern implementation
+site_author: snoodleboot, LLC
+
+repo_url: https://github.com/snoodleboot-io/sweet_tea
+repo_name: snoodleboot-io/sweet_tea
+
+theme:
+  name: material
+  palette:
+    - scheme: dracula
+      primary: purple
+      accent: purple
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [sweet_tea]
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - Getting Started: user-guide/getting-started.md
+      - Basic Usage: user-guide/basic-usage.md
+      - Advanced Features: user-guide/advanced-features.md
+  - API Reference:
+      - Registry: api/registry.md
+      - Factory: api/factory.md
+      - Abstract Factory: api/abstract-factory.md
+      - Singleton Factory: api/singleton-factory.md
+      - Entry: api/entry.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Testing: development/testing.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/snoodleboot-io/sweet_tea
+
+  generator: false
+
+copyright: Copyright &copy; 2025 snoodleboot, LLC
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
