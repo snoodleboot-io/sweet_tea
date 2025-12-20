@@ -76,9 +76,13 @@ class Registry:
         with cls.__lock:
             if lookup_type not in cls.__lookup_keys:
                 cls.__lookup_keys.append(lookup_type)
-                cls.__lookup[lookup_type] = [
-                    filtered_type for filtered_type in cls.__registry if issubclass(filtered_type.class_def, lookup_type)
-                ]
+                if lookup_type is Any:
+                    # Any matches everything - return all entries without filtering
+                    cls.__lookup[lookup_type] = cls.__registry.copy()
+                else:
+                    cls.__lookup[lookup_type] = [
+                        filtered_type for filtered_type in cls.__registry if issubclass(filtered_type.class_def, lookup_type)
+                    ]
             return cls.__lookup[lookup_type].copy()
 
     @classmethod
@@ -152,7 +156,7 @@ class Registry:
             for _, name, is_a_package in pkgutil.iter_modules([pkg_dir]):
                 pkg_name = f"{module}.{name}"
                 if not is_a_package:
-                    cls.__add_entry_to_registry2(
+                    cls.__add_entry_to_registry(
                         label=label, library=library, name_of_package=pkg_name
                     )
                 else:
@@ -165,7 +169,7 @@ class Registry:
                     )
 
     @classmethod
-    def __add_entry_to_registry2(
+    def __add_entry_to_registry(
         cls, label: str, library: str, name_of_package: str
     ) -> None:
         """
@@ -211,52 +215,4 @@ class Registry:
             # Other errors (e.g., syntax errors, runtime errors) should still fail
             error_message = traceback.format_exc()
             cls.__logger.error(f"Error processing module {name_of_package}: {error_message}")
-            raise SweetTeaError(error_message)
-
-    @classmethod
-    def __add_entry_to_registry(
-        cls, label: str, library: str, name_of_package: str
-    ) -> None:
-        """
-        Legacy method to register classes from a module using exec-based import.
-
-        This method is deprecated in favor of __add_entry_to_registry2 which uses
-        importlib for better error handling.
-
-        Args:
-            label: Optional label for categorizing classes.
-            library: Name of the library the classes belong to.
-            name_of_package: Full module name to import and scan.
-
-        Raises:
-            SweetTeaError: For any errors during module processing.
-        """
-        try:
-            exec("import " + name_of_package)
-
-            obj = sys.modules[name_of_package]
-
-            for dir_name in dir(obj):
-
-                # We don't want to print in anything that is private by intent or system default
-                if dir_name.startswith("_"):
-                    continue
-
-                # Get the object
-                class_def = getattr(obj, dir_name)
-
-                # Register the object - but don't register this factory
-                if not dir_name.lower() == "packagefactory":
-                    Registry.register(
-                        key=dir_name.lower(),
-                        class_def=class_def,
-                        library=library,
-                        label=label,
-                    )
-        except Exception:
-            # Something seems to have gone wrong. Let's log it and let there be asdf failure. Silently
-            # continuing would make it hard to track where asdf potential/likely issue in the package
-            # or in the consuming application for which classes_for_testing are being extracted.
-            error_message = traceback.format_exc()
-            cls.__logger.error(error_message)
             raise SweetTeaError(error_message)
