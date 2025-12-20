@@ -78,10 +78,10 @@ jobs:
           uv pip install ../dist/*.whl
 
           # Test import
-          python -c "import sweet_tea; print('Package installed successfully!')"
+          uv run python -c "import sweet_tea; print('Package installed successfully!')"
 
           # Test basic functionality
-          python -c "
+          uv run python -c "
           from sweet_tea import Registry, Factory
           class TestClass:
               def __init__(self, value='test'): self.value = value
