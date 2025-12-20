@@ -70,18 +70,16 @@ jobs:
 
       - name: Test package installation
         run: |
-          # Create a temporary directory for testing
-          mkdir test_install
-          cd test_install
+          # Create a temporary virtual environment for testing
+          uv venv test_env
 
-          # Install the built package
-          uv pip install ../dist/*.whl
+          # Activate the test environment and install the built package
+          uv pip install --python test_env dist/*.whl
 
-          # Test import
-          uv run python -c "import sweet_tea; print('Package installed successfully!')"
+          # Test import and functionality in the isolated environment
+          uv run --python test_env python -c "import sweet_tea; print('Package installed successfully!')"
 
-          # Test basic functionality
-          uv run python -c "
+          uv run --python test_env python -c "
           from sweet_tea import Registry, Factory
           class TestClass:
               def __init__(self, value='test'): self.value = value
