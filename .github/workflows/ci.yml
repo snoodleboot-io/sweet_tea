@@ -202,7 +202,7 @@ jobs:
           TEST_PYPI_API_TOKEN: ${{ secrets.TEST_PYPI_API_TOKEN }}
         run: |
           echo "Publishing to TestPyPI for testing..."
-          uv publish --token $TEST_PYPI_API_TOKEN --repository testpypi
+          uv publish --token $TEST_PYPI_API_TOKEN dist/*.whl dist/*.tar.gz --publish-url https://test.pypi.org/legacy/
 
   publish:
     runs-on: ubuntu-latest

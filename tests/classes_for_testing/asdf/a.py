@@ -1,8 +1,8 @@
-# Modifications © 2020 snoodleboot, LLC
+# Modifications © 2025 snoodleboot, LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain asdf copy of the License at
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
