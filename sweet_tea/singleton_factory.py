@@ -24,6 +24,7 @@ import logging
 import threading
 from typing import Any, Dict
 
+from sweet_tea.factory import Factory
 from sweet_tea.sweet_tea_error import SweetTeaError
 
 
@@ -139,6 +140,50 @@ class SingletonFactory:
             return False
 
     @classmethod
+    def create(
+        cls,
+        key: str,
+        library: str = "",
+        label: str = "",
+        configuration: dict[str, Any] | None = None,
+    ) -> Any:
+        """
+        Get an existing singleton instance or create a new one if it doesn't exist.
+
+        This method provides lazy initialization - instances are created only when first requested.
+        Subsequent calls with the same key will return the same cached instance.
+
+        Args:
+            key: Name to reference the class from the registry.
+            library: Optional library filter for the class.
+            label: Optional label filter for the class.
+            configuration: Configuration parameters as keyword arguments.
+
+        Returns:
+            The existing singleton instance, or a newly created and registered instance.
+
+        Raises:
+            SweetTeaError: If the key is not found in the registry or filters don't match.
+        """
+        normalized_key = key.lower()
+
+        with cls.__lock:
+            # Return existing instance if available
+            if normalized_key in cls.__instances:
+                return cls.__instances[normalized_key]
+
+            # Create new instance using the regular Factory
+            new_instance = Factory.create(
+                key=key, library=library, label=label, configuration=configuration
+            )
+
+            # Register the new instance as a singleton
+            cls.__instances[normalized_key] = new_instance
+            cls._logger.info(f"Created and registered singleton instance: {key}")
+
+            return new_instance
+
+    @classmethod
     def clear(cls) -> None:
         """
         Remove all registered instances.
@@ -149,6 +194,35 @@ class SingletonFactory:
             count = len(cls.__instances)
             cls.__instances.clear()
             cls._logger.info(f"Cleared {count} singleton instances")
+
+    @classmethod
+    def pop(cls, key: str) -> Any:
+        """
+        Remove and return a registered instance.
+
+        Args:
+            key: The key of the instance to remove.
+
+        Returns:
+            The removed instance.
+
+        Raises:
+            SweetTeaError: If no instance is registered for the given key.
+        """
+        normalized_key = key.lower()
+
+        with cls.__lock:
+            if normalized_key not in cls.__instances:
+                available_keys = list(cls.__instances.keys())
+                raise SweetTeaError(
+                    f"No singleton instance registered for key '{key}'. "
+                    f"Available keys: {available_keys}"
+                )
+
+            instance = cls.__instances[normalized_key]
+            del cls.__instances[normalized_key]
+            cls._logger.info(f"Removed singleton instance: {key}")
+            return instance
 
     @classmethod
     def list_keys(cls) -> list[str]:
