@@ -33,20 +33,41 @@ Registry.register("cache", RedisCache)
 Registry.register("email", SMTPEmailService)
 ```
 
-### Dependency Resolution
+### Constructor Injection with Factories
 ```python
-# Inject dependencies with configuration
+# Inject factories into constructors for on-demand dependency creation
 class UserService:
     def __init__(self, db_factory, cache_factory):
-        self.db = db_factory.create("database", configuration={
+        self.db_factory = db_factory  # Store factory reference
+        self.cache_factory = cache_factory
+
+    def get_user(self, user_id):
+        # Create database connection when needed
+        db = self.db_factory.create("database", configuration={
             "host": "prod-db",
             "port": 5432,
             "credentials": {...}
         })
-        self.cache = cache_factory.create("cache", configuration={
+
+        # Create cache when needed
+        cache = self.cache_factory.create("cache", configuration={
             "host": "redis-cluster",
             "ttl": 3600
         })
+
+        # Use dependencies...
+        user_data = db.query(f"SELECT * FROM users WHERE id = {user_id}")
+        cached_user = cache.get(f"user:{user_id}")
+        return user_data or cached_user
+```
+
+### Direct Dependency Injection
+```python
+# Traditional approach: inject pre-configured instances
+class UserService:
+    def __init__(self, database, cache):
+        self.database = database  # Pre-configured instance
+        self.cache = cache        # Pre-configured instance
 ```
 
 ### Lifecycle Management
