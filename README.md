@@ -6,10 +6,11 @@
 [![codecov](https://codecov.io/github/snoodleboot-io/sweet_tea/coverage.svg?branch=main)](https://codecov.io/gh/snoodleboot-io/sweet_tea)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/snoodleboot-io/sweet_tea/blob/main/LICENSE)
 
-A comprehensive, production-ready Python factory pattern implementation with advanced features for building extensible applications.
+A comprehensive, production-ready Python dependency injection framework using factory patterns with configuration-based object management and lifecycle control.
 
 ## 🚀 Features
 
+- **Configuration-Based Dependency Injection**: Register classes once, create instances with runtime configuration
 - **Dual Factory Patterns**: Class-based factories (new instances) AND instance-based singletons (shared instances)
 - **Thread-Safe Registry**: Concurrent operations with RLock synchronization
 - **Type-Safe Generics**: Full TypeVar support with `__class_getitem__`
@@ -19,6 +20,52 @@ A comprehensive, production-ready Python factory pattern implementation with adv
 - **Lazy Singletons**: SingletonFactory.create() for on-demand singleton instantiation
 - **Comprehensive Testing**: 58 tests with 97% coverage
 - **Rich Documentation**: MkDocs with Dracula theme and API reference
+
+## 🏗️ Dependency Injection
+
+Sweet Tea provides a powerful configuration-based dependency injection system that separates object creation from usage:
+
+### Service Registration
+```python
+# Register services once at application startup
+Registry.register("database", PostgreSQLConnection)
+Registry.register("cache", RedisCache)
+Registry.register("email", SMTPEmailService)
+```
+
+### Dependency Resolution
+```python
+# Inject dependencies with configuration
+class UserService:
+    def __init__(self, db_factory, cache_factory):
+        self.db = db_factory.create("database", configuration={
+            "host": "prod-db",
+            "port": 5432,
+            "credentials": {...}
+        })
+        self.cache = cache_factory.create("cache", configuration={
+            "host": "redis-cluster",
+            "ttl": 3600
+        })
+```
+
+### Lifecycle Management
+```python
+# Singletons for shared resources
+auth_service = SingletonFactory.create("auth", configuration={"jwt_secret": "..."})
+# Same instance returned on subsequent calls
+
+# New instances for request-scoped objects
+request_handler = Factory.create("request_handler", configuration={"user_id": 123})
+# Fresh instance for each request
+```
+
+### Benefits
+- **Separation of Concerns**: Configuration separate from implementation
+- **Testability**: Easy mocking and dependency substitution
+- **Flexibility**: Runtime configuration changes without code changes
+- **Maintainability**: Centralized dependency management
+- **Type Safety**: Compile-time interface checking with AbstractFactory
 
 ## 📦 Installation
 
