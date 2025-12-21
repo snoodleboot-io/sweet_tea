@@ -3,7 +3,7 @@
 [![CI](https://github.com/snoodleboot-io/sweet_tea/actions/workflows/ci.yml/badge.svg)](https://github.com/snoodleboot-io/sweet_tea/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/sweet-tea.svg)](https://pypi.org/project/sweet-tea/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![codecov](https://codecov.io/gh/snoodleboot-io/sweet_tea/branch/main/graph/badge.svg)](https://codecov.io/gh/snoodleboot-io/sweet_tea)
+[![codecov](https://codecov.io/github/snoodleboot-io/sweet_tea/coverage.svg?branch=main)](https://codecov.io/gh/snoodleboot-io/sweet_tea)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/snoodleboot-io/sweet_tea/blob/main/LICENSE)
 
 A comprehensive, production-ready Python factory pattern implementation with advanced features for building extensible applications.
