@@ -70,22 +70,31 @@ jobs:
 
       - name: Test package installation
         run: |
-          # Create a temporary virtual environment for testing
+          # Create a temporary directory for isolated testing
+          mkdir -p /tmp/package_test
+          cd /tmp/package_test
+
+          # Create isolated virtual environment with uv
           uv venv test_env
 
-          # Activate the test environment and install the built package
-          uv pip install --python test_env dist/*.whl
+          # Install the built package in the isolated environment
+          uv pip install --python test_env $GITHUB_WORKSPACE/dist/*.whl
 
           # Test import and functionality in the isolated environment
           uv run --python test_env python -c "import sweet_tea; print('Package installed successfully!')"
 
           uv run --python test_env python -c "
-          from sweet_tea import Registry, Factory
+          from sweet_tea.registry import Registry
+          from sweet_tea.factory import Factory
+          from sweet_tea.singleton_factory import SingletonFactory
           class TestClass:
               def __init__(self, value='test'): self.value = value
           Registry.register('test', TestClass)
           instance = Factory.create('test')
           print(f'Factory works: {instance.value}')
+          SingletonFactory.register('singleton', TestClass('singleton'))
+          singleton = SingletonFactory.get('singleton')
+          print(f'Singleton works: {singleton.value}')
           "
 
   publish:
