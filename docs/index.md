@@ -9,7 +9,8 @@ A comprehensive, production-ready Python factory pattern implementation with adv
 - **Flexible Key Matching**: Support for ClassName, class_name, classname variations
 - **Optional Dependencies**: Graceful handling with custom warnings
 - **Auto-Registration**: Classes automatically registered via package imports
-- **Comprehensive Testing**: 45 tests with 97% coverage
+- **Lazy Singletons**: SingletonFactory.create() for on-demand singleton instantiation
+- **Comprehensive Testing**: 58 tests with 97% coverage
 
 ## 📦 Installation
 

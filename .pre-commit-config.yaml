@@ -6,13 +6,6 @@ repos:
       - id: black
         language_version: python3
 
-  # Import sorting (compatible with black)
-  - repo: https://github.com/pycqa/isort
-    rev: 6.0.0
-    hooks:
-      - id: isort
-        args: ["--profile", "black", "--check-only", "--diff"]
-
   # Fast linter
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.10

@@ -24,12 +24,12 @@ import logging
 import threading
 from typing import Any, Dict
 
+from sweet_tea.base_factory import BaseFactory
 from sweet_tea.factory import Factory
-from sweet_tea.registry import Registry
 from sweet_tea.sweet_tea_error import SweetTeaError
 
 
-class SingletonFactory:
+class SingletonFactory(BaseFactory):
     """
     Factory for registering and retrieving singleton instances.
 
@@ -52,93 +52,6 @@ class SingletonFactory:
 
     # Logger instance
     _logger = logging.getLogger(__name__)
-
-    @classmethod
-    def register(cls, key: str, instance: Any, allow_override: bool = False) -> None:
-        """
-        Register a singleton instance.
-
-        Args:
-            key: Unique identifier for the instance.
-            instance: The pre-configured instance to register.
-            allow_override: If True, allows overwriting existing instances.
-
-        Raises:
-            SweetTeaError: If key already exists and allow_override is False.
-        """
-        normalized_key = key.lower()
-
-        with cls.__lock:
-            if normalized_key in cls.__instances and not allow_override:
-                raise SweetTeaError(
-                    f"Instance with key '{key}' is already registered. "
-                    "Use allow_override=True to replace it."
-                )
-
-            cls.__instances[normalized_key] = instance
-            cls._logger.info(f"Registered singleton instance: {key}")
-
-    @classmethod
-    def get(cls, key: str) -> Any:
-        """
-        Retrieve a registered singleton instance.
-
-        Args:
-            key: The key of the instance to retrieve.
-
-        Returns:
-            The registered instance.
-
-        Raises:
-            SweetTeaError: If no instance is registered for the given key.
-        """
-        normalized_key = key.lower()
-
-        with cls.__lock:
-            if normalized_key not in cls.__instances:
-                available_keys = list(cls.__instances.keys())
-                raise SweetTeaError(
-                    f"No singleton instance registered for key '{key}'. "
-                    f"Available keys: {available_keys}"
-                )
-
-            return cls.__instances[normalized_key]
-
-    @classmethod
-    def has(cls, key: str) -> bool:
-        """
-        Check if an instance is registered for the given key.
-
-        Args:
-            key: The key to check.
-
-        Returns:
-            True if an instance is registered, False otherwise.
-        """
-        normalized_key = key.lower()
-
-        with cls.__lock:
-            return normalized_key in cls.__instances
-
-    @classmethod
-    def unregister(cls, key: str) -> bool:
-        """
-        Remove a registered instance.
-
-        Args:
-            key: The key of the instance to remove.
-
-        Returns:
-            True if an instance was removed, False if key didn't exist.
-        """
-        normalized_key = key.lower()
-
-        with cls.__lock:
-            if normalized_key in cls.__instances:
-                del cls.__instances[normalized_key]
-                cls._logger.info(f"Unregistered singleton instance: {key}")
-                return True
-            return False
 
     @classmethod
     def create(
@@ -166,7 +79,9 @@ class SingletonFactory:
         Raises:
             SweetTeaError: If the key is not found in the registry or filters don't match.
         """
-        normalized_key = key.lower()
+        # Find the normalized key using the same logic as Factory
+        key_variations = cls._generate_key_variations(key)
+        normalized_key = key_variations[0] if key_variations else key.lower()
 
         with cls.__lock:
             # Return existing instance if available
@@ -201,6 +116,9 @@ class SingletonFactory:
         """
         Remove and return a registered instance.
 
+        This removes the instance and all its key variations from the registry,
+        ensuring complete cleanup of the singleton.
+
         Args:
             key: The key of the instance to remove.
 
@@ -210,19 +128,37 @@ class SingletonFactory:
         Raises:
             SweetTeaError: If no instance is registered for the given key.
         """
-        normalized_key = key.lower()
+        # Find all key variations that could match
+        key_variations = cls._generate_key_variations(key)
 
         with cls.__lock:
-            if normalized_key not in cls.__instances:
+            # Find which variation actually has the instance
+            instance = None
+            found_key = None
+
+            for variation in key_variations:
+                if variation in cls.__instances:
+                    instance = cls.__instances[variation]
+                    found_key = variation
+                    break
+
+            if instance is None:
                 available_keys = list(cls.__instances.keys())
                 raise SweetTeaError(
                     f"No singleton instance registered for key '{key}'. "
                     f"Available keys: {available_keys}"
                 )
 
-            instance = cls.__instances[normalized_key]
-            del cls.__instances[normalized_key]
-            cls._logger.info(f"Removed singleton instance: {key}")
+            # Remove all variations that could match this instance
+            # This ensures complete cleanup of the singleton
+            for variation in key_variations:
+                if variation in cls.__instances:
+                    del cls.__instances[variation]
+
+            # Python's garbage collector will handle destruction automatically
+            # when all references are removed
+
+            cls._logger.info(f"Removed singleton instance: {key} (key: {found_key})")
             return instance
 
     @classmethod
@@ -234,7 +170,7 @@ class SingletonFactory:
             List of available class keys from the registry in alphabetical order.
         """
         # Return keys from the Registry that can be created
-        entries = Registry.entries()
+        entries = cls._registry.entries()
         return sorted([entry.key for entry in entries])
 
     @classmethod
@@ -247,14 +183,3 @@ class SingletonFactory:
         """
         with cls.__lock:
             return sorted(cls.__instances.keys())
-
-    @classmethod
-    def count(cls) -> int:
-        """
-        Get the number of registered instances.
-
-        Returns:
-            Number of registered singleton instances.
-        """
-        with cls.__lock:
-            return len(cls.__instances)

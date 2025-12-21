@@ -16,23 +16,20 @@ Base factory implementation for instantiating registered classes.
 """
 
 import logging
-import re
-from typing import Any, Type
+from typing import Any
 
+from sweet_tea.base_factory import BaseFactory
 from sweet_tea.entry import Entry
-from sweet_tea.registry import Registry
 from sweet_tea.sweet_tea_error import SweetTeaError
 
 
-class Factory:
+class Factory(BaseFactory):
     """
     Base factory class for creating instances of registered classes.
 
     This factory provides the core functionality for instantiating classes
     from the registry with optional filtering by library and label.
     """
-
-    _registry: Type[Registry] = Registry
 
     _logger = logging.getLogger(__name__)
 
@@ -130,60 +127,3 @@ class Factory:
         if not configuration:
             configuration = {}
         return entries[0].class_def(**configuration)
-
-    @classmethod
-    def _generate_key_variations(cls, key: str) -> list[str]:
-        """
-        Generate key variations for flexible class name matching.
-
-        Since registry keys are stored in lowercase, this generates multiple
-        normalized variations of the input key to match against stored keys.
-
-        Args:
-            key: The input key to generate variations for.
-
-        Returns:
-            List of normalized key variations to try, in order of preference.
-        """
-        variations = []
-        lower_key = key.lower()
-
-        # Always try the exact lowercase version first
-        variations.append(lower_key)
-
-        # Try converting camelCase to snake_case (e.g., "MyClass" -> "my_class")
-        def camel_to_snake(s):
-            # Insert underscore between lowercase and uppercase
-            s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
-            # Insert underscore between uppercase sequences
-            s = re.sub(r"([A-Z])([A-Z][a-z])", r"\1_\2", s)
-            return s.lower()
-
-        snake_case = camel_to_snake(key)
-        if snake_case not in variations:
-            variations.append(snake_case)
-
-        # Try removing underscores (e.g., "my_class" -> "myclass")
-        no_underscores = lower_key.replace("_", "")
-        if no_underscores not in variations:
-            variations.append(no_underscores)
-
-        # Try removing "class" suffix (e.g., "myclass" -> "my")
-        if lower_key.endswith("class") and len(lower_key) > 5:
-            without_class = lower_key[:-5]
-            if without_class not in variations:
-                variations.append(without_class)
-
-        if lower_key.endswith("_class") and len(lower_key) > 6:
-            without_class = lower_key[:-6]
-            if without_class not in variations:
-                variations.append(without_class)
-
-        # Special case: if the key looks like it should have underscores
-        # (consecutive capitals), add that variation
-        if re.search(r"[A-Z]{2,}", key):
-            with_underscores = camel_to_snake(key)
-            if with_underscores not in variations:
-                variations.append(with_underscores)
-
-        return variations

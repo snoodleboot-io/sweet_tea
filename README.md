@@ -16,6 +16,7 @@ A comprehensive, production-ready Python factory pattern implementation with adv
 - **Flexible Key Matching**: Support for ClassName, class_name, classname variations
 - **Optional Dependencies**: Graceful handling with custom warnings
 - **Auto-Registration**: Classes automatically registered via package imports
+- **Lazy Singletons**: SingletonFactory.create() for on-demand singleton instantiation
 - **Comprehensive Testing**: 58 tests with 97% coverage
 - **Rich Documentation**: MkDocs with Dracula theme and API reference
 
@@ -50,12 +51,11 @@ db1 = Factory.create("database", configuration={"host": "server1"})
 db2 = Factory.create("database", configuration={"host": "server2"})
 # db1 ≠ db2 (different instances)
 
-# === INSTANCE-BASED SINGLETON FACTORY (Reuses same instance) ===
-db_connection = DatabaseConnection(host="prod-db", pool_size=10)
-SingletonFactory.register("database", db_connection)
-db3 = SingletonFactory.get("database")
-db4 = SingletonFactory.get("database")
-# db3 === db4 (same instance)
+# === LAZY SINGLETON FACTORY (Creates and caches instances on-demand) ===
+Registry.register("database", DatabaseConnection)
+db3 = SingletonFactory.create("database", configuration={"host": "prod-db", "pool_size": 10})
+db4 = SingletonFactory.create("database")  # Returns cached instance
+# db3 === db4 (same cached instance)
 
 # === TYPE-SAFE ABSTRACT FACTORIES ===
 class DatabaseInterface:
@@ -69,7 +69,7 @@ db = db_factory.create("postgres")  # Only classes implementing DatabaseInterfac
 
 1. **Factory** - Class registration → New instances with configuration
 2. **AbstractFactory** - Type-constrained → New instances with type safety
-3. **SingletonFactory** - Instance registration → Shared singleton instances
+3. **SingletonFactory** - Lazy singletons → Cached instances created on-demand
 
 ## 📖 Documentation
 

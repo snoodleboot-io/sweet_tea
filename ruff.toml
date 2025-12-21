@@ -1,0 +1,13 @@
+[lint]
+# Enable import sorting rules
+select = ["E", "F", "I"]  # Include import sorting (I rules)
+ignore = ["E501"]  # Ignore line too long errors
+
+[lint.isort]
+# Configure import sorting to be compatible with black
+force-single-line = false
+force-sort-within-sections = false
+lines-after-imports = 2
+known-first-party = ["sweet_tea"]
+order-by-type = true
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]

@@ -23,15 +23,42 @@ All registry operations are thread-safe:
 
 ```python
 import threading
-from sweet_tea import Registry
+from sweet_tea import Registry, SingletonFactory
 
 def worker(thread_id):
-    # Safe concurrent registration
+    # Safe concurrent registration and singleton creation
     Registry.register(f"service_{thread_id}", MyService)
+    instance = SingletonFactory.create(f"service_{thread_id}")
 
 threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
 for t in threads: t.start()
 for t in threads: t.join()
+```
+
+## Singleton Management
+
+The SingletonFactory provides comprehensive singleton lifecycle management:
+
+```python
+from sweet_tea import Registry, SingletonFactory
+
+# Register classes
+Registry.register("cache", RedisCache)
+Registry.register("database", PostgreSQLConnection)
+
+# Create singletons on-demand
+cache = SingletonFactory.create("cache", configuration={"ttl": 3600})
+db = SingletonFactory.create("database", configuration={"host": "localhost"})
+
+# Inspect current singletons
+singletons = SingletonFactory.list_singletons()  # ['cache', 'database']
+available = SingletonFactory.list_keys()         # All registry keys
+
+# Remove specific singleton
+old_cache = SingletonFactory.pop("cache")        # Returns and removes instance
+
+# Clear all singletons
+SingletonFactory.clear()                         # Remove all cached instances
 ```
 
 ## Optional Dependencies

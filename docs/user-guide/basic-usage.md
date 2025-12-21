@@ -32,19 +32,23 @@ db2 = Factory.create("database", configuration={"host": "server2"})
 
 ### 2. Instance-Based Singleton Factory (SingletonFactory)
 
-Registers and reuses pre-configured instances:
+Creates and caches singleton instances on-demand:
 
 ```python
-from sweet_tea import SingletonFactory
+from sweet_tea import Registry, SingletonFactory
 
-# Create and register a pre-configured instance
+# Register the class in the registry
+Registry.register("database", DatabaseConnection)
+
+# Create singleton instances (lazy initialization)
+db1 = SingletonFactory.create("database", configuration={"host": "prod-db", "pool_size": 10})
+db2 = SingletonFactory.create("database")
+# db1 === db2 (same cached instance)
+
+# Alternative: Pre-register an instance
 db_connection = DatabaseConnection(host="prod-db", pool_size=10)
 SingletonFactory.register("database", db_connection)
-
-# Retrieve the same instance every time
-db1 = SingletonFactory.get("database")
-db2 = SingletonFactory.get("database")
-# db1 === db2 (same instance)
+db3 = SingletonFactory.get("database")  # Retrieve pre-registered instance
 ```
 
 ### 3. Type-Safe Abstract Factory (AbstractFactory)

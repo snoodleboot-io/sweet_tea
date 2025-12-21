@@ -4,30 +4,22 @@
 
 ## Methods
 
-### `register()`
+### `create()`
 
-::: sweet_tea.singleton_factory.SingletonFactory.register
-
-### `get()`
-
-::: sweet_tea.singleton_factory.SingletonFactory.get
-
-### `has()`
-
-::: sweet_tea.singleton_factory.SingletonFactory.has
-
-### `unregister()`
-
-::: sweet_tea.singleton_factory.SingletonFactory.unregister
+::: sweet_tea.singleton_factory.SingletonFactory.create
 
 ### `clear()`
 
 ::: sweet_tea.singleton_factory.SingletonFactory.clear
 
+### `pop()`
+
+::: sweet_tea.singleton_factory.SingletonFactory.pop
+
 ### `list_keys()`
 
 ::: sweet_tea.singleton_factory.SingletonFactory.list_keys
 
-### `count()`
+### `list_singletons()`
 
-::: sweet_tea.singleton_factory.SingletonFactory.count
+::: sweet_tea.singleton_factory.SingletonFactory.list_singletons
