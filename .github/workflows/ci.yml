@@ -178,6 +178,10 @@ jobs:
     needs: [test, build-and-test-package]
     if: github.ref == 'refs/heads/main' && github.event_name != 'release'
 
+    env:
+      MAJOR_VERSION: 0
+      MINOR_VERSION: 1
+
     steps:
       - uses: actions/checkout@v4
 
@@ -193,13 +197,13 @@ jobs:
       - name: Install build dependencies
         run: uv sync --dev
 
-      - name: Set development version
+      - name: Set semantic version for TestPyPI
         run: |
-          # Create a development version for TestPyPI
+          # Use configured major.minor and run number as patch
+          SEMANTIC_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${GITHUB_RUN_NUMBER}"
           ORIGINAL_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          DEV_VERSION="${ORIGINAL_VERSION}.dev${GITHUB_RUN_NUMBER}"
-          sed -i "s/version = \"$ORIGINAL_VERSION\"/version = \"$DEV_VERSION\"/" pyproject.toml
-          echo "Building version: $DEV_VERSION"
+          sed -i "s/version = \"$ORIGINAL_VERSION\"/version = \"$SEMANTIC_VERSION\"/" pyproject.toml
+          echo "Building TestPyPI version: $SEMANTIC_VERSION (major: $MAJOR_VERSION, minor: $MINOR_VERSION, patch: $GITHUB_RUN_NUMBER)"
 
       - name: Build package
         run: uv build
@@ -217,6 +221,10 @@ jobs:
     needs: [test, build-and-test-package, publish-to-testpypi]
     if: github.event_name == 'release'
 
+    env:
+      MAJOR_VERSION: 0
+      MINOR_VERSION: 2
+
     steps:
       - uses: actions/checkout@v4
 
@@ -231,6 +239,14 @@ jobs:
 
       - name: Install build dependencies
         run: uv sync --dev
+
+      - name: Set semantic version for PyPI
+        run: |
+          # Use configured major.minor and run number as patch for release
+          SEMANTIC_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${GITHUB_RUN_NUMBER}"
+          ORIGINAL_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          sed -i "s/version = \"$ORIGINAL_VERSION\"/version = \"$SEMANTIC_VERSION\"/" pyproject.toml
+          echo "Building PyPI version: $SEMANTIC_VERSION (major: $MAJOR_VERSION, minor: $MINOR_VERSION, patch: $GITHUB_RUN_NUMBER)"
 
       - name: Build package
         run: uv build

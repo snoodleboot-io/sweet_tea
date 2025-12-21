@@ -1,6 +1,6 @@
 [project]
 name = "sweet_tea"
-version = "0.1.2"
+version = "0.0.0"
 description = "A comprehensive Python factory pattern implementation with thread-safe operations and type-safe generics"
 readme = "README.md"
 license = {text = "Apache-2.0"}
