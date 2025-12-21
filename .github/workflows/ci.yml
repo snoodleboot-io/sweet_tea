@@ -80,7 +80,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install MkDocs
-        run: pip install mkdocs mkdocs-material
+        run: pip install mkdocs mkdocs-material mkdocstrings[python]
       - name: Build MkDocs
         run: mkdocs build --strict
 
