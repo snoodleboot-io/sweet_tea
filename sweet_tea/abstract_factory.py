@@ -22,6 +22,7 @@ from typing import Any, Generic, Type, TypeVar
 
 from sweet_tea.factory import Factory
 
+
 T = TypeVar("T")
 
 
