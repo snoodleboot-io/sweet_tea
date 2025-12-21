@@ -25,6 +25,7 @@ import threading
 from typing import Any, Dict
 
 from sweet_tea.factory import Factory
+from sweet_tea.registry import Registry
 from sweet_tea.sweet_tea_error import SweetTeaError
 
 
@@ -227,10 +228,22 @@ class SingletonFactory:
     @classmethod
     def list_keys(cls) -> list[str]:
         """
-        Get a list of all registered instance keys.
+        Get a list of all class keys that can be created.
 
         Returns:
-            List of registered keys in alphabetical order.
+            List of available class keys from the registry in alphabetical order.
+        """
+        # Return keys from the Registry that can be created
+        entries = Registry.entries()
+        return sorted([entry.key for entry in entries])
+
+    @classmethod
+    def list_singletons(cls) -> list[str]:
+        """
+        Get a list of all cached singleton instance keys.
+
+        Returns:
+            List of registered singleton keys in alphabetical order.
         """
         with cls.__lock:
             return sorted(cls.__instances.keys())

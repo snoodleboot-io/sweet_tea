@@ -149,10 +149,10 @@ class TestSingletonFactory(TestCase):
         SingletonFactory.clear()
 
         self.assertEqual(SingletonFactory.count(), 0)
-        self.assertEqual(SingletonFactory.list_keys(), [])
+        self.assertEqual(SingletonFactory.list_singletons(), [])
 
-    def test_list_keys(self):
-        """Test listing registered keys."""
+    def test_list_singletons(self):
+        """Test listing cached singleton keys."""
 
         class TestService:
             pass
@@ -162,7 +162,7 @@ class TestSingletonFactory(TestCase):
         SingletonFactory.register("alpha", TestService())
         SingletonFactory.register("beta", TestService())
 
-        keys = SingletonFactory.list_keys()
+        keys = SingletonFactory.list_singletons()
         self.assertEqual(keys, ["alpha", "beta", "zebra"])
 
     def test_count_instances(self):
