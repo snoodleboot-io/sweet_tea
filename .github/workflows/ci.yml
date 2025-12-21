@@ -177,6 +177,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, build-and-test-package]
     if: github.ref == 'refs/heads/main'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     env:
       MAJOR_VERSION: 0
@@ -198,12 +200,14 @@ jobs:
         run: uv sync --dev
 
       - name: Set semantic version for TestPyPI
+        id: version
         run: |
           # Use configured major.minor and run number as patch
           SEMANTIC_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${GITHUB_RUN_NUMBER}"
           ORIGINAL_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           sed -i "s/version = \"$ORIGINAL_VERSION\"/version = \"$SEMANTIC_VERSION\"/" pyproject.toml
           echo "Building TestPyPI version: $SEMANTIC_VERSION (major: $MAJOR_VERSION, minor: $MINOR_VERSION, patch: $GITHUB_RUN_NUMBER)"
+          echo "version=$SEMANTIC_VERSION" >> $GITHUB_OUTPUT
 
       - name: Build package
         run: uv build
@@ -221,10 +225,6 @@ jobs:
     needs: [test, build-and-test-package, publish-to-testpypi]
     if: github.ref == 'refs/heads/main'
 
-    env:
-      MAJOR_VERSION: 0
-      MINOR_VERSION: 2
-
     steps:
       - uses: actions/checkout@v4
 
@@ -240,13 +240,13 @@ jobs:
       - name: Install build dependencies
         run: uv sync --dev
 
-      - name: Set semantic version for PyPI
+      - name: Use same version as TestPyPI
         run: |
-          # Use configured major.minor and run number as patch for release
-          SEMANTIC_VERSION="${MAJOR_VERSION}.${MINOR_VERSION}.${GITHUB_RUN_NUMBER}"
+          # Get the version that was used for TestPyPI
+          TESTPYPI_VERSION="${{ needs.publish-to-testpypi.outputs.version }}"
           ORIGINAL_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
-          sed -i "s/version = \"$ORIGINAL_VERSION\"/version = \"$SEMANTIC_VERSION\"/" pyproject.toml
-          echo "Building PyPI version: $SEMANTIC_VERSION (major: $MAJOR_VERSION, minor: $MINOR_VERSION, patch: $GITHUB_RUN_NUMBER)"
+          sed -i "s/version = \"$ORIGINAL_VERSION\"/version = \"$TESTPYPI_VERSION\"/" pyproject.toml
+          echo "Building PyPI version: $TESTPYPI_VERSION (same as TestPyPI)"
 
       - name: Build package
         run: uv build
