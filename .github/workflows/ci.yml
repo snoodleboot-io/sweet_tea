@@ -148,18 +148,18 @@ jobs:
           uv run --python test_env python -c "import sweet_tea; print('Package installed successfully!')"
 
           uv run --python test_env python -c "
-          from sweet_tea.registry import Registry
-          from sweet_tea.factory import Factory
-          from sweet_tea.singleton_factory import SingletonFactory
-          class TestClass:
-              def __init__(self, value='test'): self.value = value
-          Registry.register('test', TestClass)
-          instance = Factory.create('test')
-          print(f'Factory works: {instance.value}')
-          SingletonFactory.register('singleton', TestClass('singleton'))
-          singleton = SingletonFactory.get('singleton')
-          print(f'Singleton works: {singleton.value}')
-          "
+from sweet_tea.registry import Registry
+from sweet_tea.factory import Factory
+from sweet_tea.singleton_factory import SingletonFactory
+class TestClass:
+    def __init__(self, value='test'): self.value = value
+Registry.register('test', TestClass)
+instance = Factory.create('test')
+print(f'Factory works: {instance.value}')
+Registry.register('singleton', TestClass)
+singleton = SingletonFactory.create('singleton', configuration={'value': 'singleton'})
+print(f'Singleton works: {singleton.value}')
+"
 
   publish-to-testpypi:
     runs-on: ubuntu-latest
