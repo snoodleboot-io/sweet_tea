@@ -33,6 +33,39 @@ Registry.register("cache", RedisCache)
 Registry.register("email", SMTPEmailService)
 ```
 
+### Constructor Injection with Configuration Dictionaries
+```python
+# Inject configuration dictionaries that define dependencies
+class UserService:
+    def __init__(self, db_config, cache_config):
+        # Store configuration dictionaries
+        self.db_config = db_config
+        self.cache_config = cache_config
+
+        # Create factory instances immediately or lazily
+        self.db = Factory.create(
+            db_config["class_name"],
+            configuration=db_config["configuration"]
+        )
+        self.cache = SingletonFactory.create(
+            cache_config["class_name"],
+            configuration=cache_config["configuration"]
+        )
+
+# Usage with configuration dictionaries
+db_config = {
+    "class_name": "database",
+    "configuration": {"host": "prod-db", "port": 5432}
+}
+
+cache_config = {
+    "class_name": "cache",
+    "configuration": {"host": "redis", "ttl": 3600}
+}
+
+user_service = UserService(db_config, cache_config)
+```
+
 ### Constructor Injection with Factories
 ```python
 # Inject factories into constructors for on-demand dependency creation
