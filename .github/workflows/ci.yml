@@ -176,7 +176,7 @@ jobs:
   publish-to-testpypi:
     runs-on: ubuntu-latest
     needs: [test, build-and-test-package]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'release'
+    if: github.ref == 'refs/heads/main'
 
     env:
       MAJOR_VERSION: 0
@@ -218,8 +218,8 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
-    needs: [test, build-and-test-package]
-    if: github.event_name == 'release'
+    needs: [test, build-and-test-package, publish-to-testpypi]
+    if: github.ref == 'refs/heads/main'
 
     env:
       MAJOR_VERSION: 0
