@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/snoodleboot-io/sweet_tea/actions/workflows/ci.yml/badge.svg)](https://github.com/snoodleboot-io/sweet_tea/actions/workflows/ci.yml)
 [![PyPI version](https://badge.fury.io/py/sweet-tea.svg)](https://pypi.org/project/sweet-tea/)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![codecov](https://codecov.io/gh/snoodleboot-io/sweet_tea/branch/main/graph/badge.svg)](https://codecov.io/gh/snoodleboot-io/sweet_tea)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/snoodleboot-io/sweet_tea/blob/main/LICENSE)
 
@@ -93,7 +93,7 @@ Complete documentation is available at [https://snoodleboot-io.github.io/sweet_t
 
 ### Prerequisites
 
-- Python 3.12 or higher
+- Python 3.10 or higher
 - uv package manager (recommended)
 
 ### Setup
