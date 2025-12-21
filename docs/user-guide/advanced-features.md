@@ -126,18 +126,3 @@ cache_factory = AbstractFactory[CacheInterface]
 
 app = Application(db_factory, cache_factory)
 ```
-
-### Plugin Architecture
-
-```python
-# Plugins can register themselves
-class EmailPlugin:
-    def send(self, to: str, subject: str, body: str):
-        pass
-
-# Plugin registers on import
-Registry.register("email", EmailPlugin, library="plugins")
-
-# Application discovers plugins
-plugins = Registry.entries()
-email_plugins = [p for p in plugins if p.library == "plugins"]
