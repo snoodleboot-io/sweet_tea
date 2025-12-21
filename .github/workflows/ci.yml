@@ -193,6 +193,14 @@ jobs:
       - name: Install build dependencies
         run: uv sync --dev
 
+      - name: Set development version
+        run: |
+          # Create a development version for TestPyPI
+          ORIGINAL_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          DEV_VERSION="${ORIGINAL_VERSION}.dev${GITHUB_RUN_NUMBER}"
+          sed -i "s/version = \"$ORIGINAL_VERSION\"/version = \"$DEV_VERSION\"/" pyproject.toml
+          echo "Building version: $DEV_VERSION"
+
       - name: Build package
         run: uv build
 
