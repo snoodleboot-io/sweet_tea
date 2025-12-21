@@ -11,7 +11,7 @@ repos:
     rev: v0.14.10
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [check, ., --fix]
       - id: ruff-format
 
   # Security scanning
