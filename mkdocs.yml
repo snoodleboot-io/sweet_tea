@@ -44,6 +44,7 @@ nav:
       - Registry: api/registry.md
       - Factory: api/factory.md
       - Abstract Factory: api/abstract-factory.md
+      - Inverter Factory: api/inverter-factory.md
       - Singleton Factory: api/singleton-factory.md
       - Entry: api/entry.md
   - Development:
