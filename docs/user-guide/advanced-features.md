@@ -35,6 +35,30 @@ for t in threads: t.start()
 for t in threads: t.join()
 ```
 
+## Lazy Construction with Inverter Factory
+
+The InverterFactory provides class definitions instead of instances, giving you complete control over instantiation:
+
+```python
+from sweet_tea import Registry, InverterFactory
+
+# Register a class
+Registry.register("expensive_service", ExpensiveService)
+
+# Get the class definition (no instantiation yet)
+service_class = InverterFactory.create("expensive_service")
+
+# Instantiate when ready, with custom parameters
+service1 = service_class(config="production", timeout=30)
+service2 = service_class(config="testing", timeout=5)
+
+# Perfect for:
+# - Expensive object creation
+# - Dependency injection frameworks
+# - Metaprogramming scenarios
+# - When instantiation parameters aren't known at factory call time
+```
+
 ## Singleton Management
 
 The SingletonFactory provides comprehensive singleton lifecycle management:

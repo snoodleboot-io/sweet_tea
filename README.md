@@ -166,11 +166,12 @@ db_factory = AbstractFactory[DatabaseInterface]
 db = db_factory.create("postgres")  # Only classes implementing DatabaseInterface
 ```
 
-### Three Factory Patterns
+### Four Factory Patterns
 
 1. **Factory** - Class registration → New instances with configuration
 2. **AbstractFactory** - Type-constrained → New instances with type safety
 3. **SingletonFactory** - Lazy singletons → Cached instances created on-demand
+4. **InverterFactory** - Lazy construction → Class definitions for user-controlled instantiation
 
 ## 📖 Documentation
 
