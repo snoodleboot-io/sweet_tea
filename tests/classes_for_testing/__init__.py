@@ -13,5 +13,4 @@
 # limitations under the License.
 from sweet_tea.registry import Registry
 
-
 Registry.fill_registry()
