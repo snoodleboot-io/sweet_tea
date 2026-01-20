@@ -12,33 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-Abstract factory implementation with generic type constraints.
+Abstract inverter factory implementation with generic type constraints.
 
-This factory allows instantiation of classes that are subclasses of a specified
-generic type, enabling type-safe factory patterns.
+This factory combines the type constraints of AbstractFactory with the
+class-definition-returning behavior of InverterFactory. It allows instantiation
+of class definitions that are subclasses of a specified generic type, enabling
+type-safe factory patterns for lazy construction scenarios.
 """
 
 from typing import Any, Generic, Type, TypeVar
 
-from sweet_tea.factory import Factory
+from sweet_tea.inverter_factory import InverterFactory
 
 T = TypeVar("T")
 
 
-class AbstractFactory(Generic[T], Factory):
+class AbstractInverterFactory(Generic[T], InverterFactory):
     """
-    A generic factory that constrains instantiation to subclasses of type T.
+    A generic inverter factory that constrains class retrieval to subclasses of type T.
 
     Usage:
-        factory = AbstractFactory[MyBaseClass]
-        instance = factory.create('my_key')
+        factory = AbstractInverterFactory[MyBaseClass]
+        class_def = factory.create('my_key')
         # Only classes inheriting from MyBaseClass will be available
+        instance = class_def(**kwargs)  # Instantiate when ready
     """
 
     _type = T  # type: ignore[misc]
 
     @classmethod
-    def __class_getitem__(cls, item: Type[T]) -> Type["AbstractFactory[T]"]:
+    def __class_getitem__(cls, item: Type[T]) -> Type["AbstractInverterFactory[T]"]:
         """Create a parameterized generic subclass with the specified type."""
         result = super().__class_getitem__(item)  # type: ignore[attr-defined,misc]
         result._type = item  # type: ignore[misc]
@@ -55,19 +58,17 @@ class AbstractFactory(Generic[T], Factory):
         key: str,
         library: str = "",
         label: str = "",
-        configuration: dict[str, Any] | None = None,
-    ) -> Any:
+    ) -> Type[Any]:
         """
-        Create an instance of a registered class that is a subclass of the generic type.
+        Retrieve the class definition for a registered class that is a subclass of the generic type.
 
         Args:
             key: Name to reference the class from the registry.
             library: Optional library filter for the class.
             label: Optional label filter for the class.
-            configuration: Configuration parameters as keyword arguments.
 
         Returns:
-            Configured instance of the requested class.
+            The class definition that can be instantiated by the caller.
 
         Raises:
             SweetTeaError: When the key is not found or filters don't match.
@@ -82,4 +83,4 @@ class AbstractFactory(Generic[T], Factory):
             if entries:  # Found entries with this variation
                 break
 
-        return cls._create_from_entries(entries, key, library, label, configuration)
+        return cls._create_from_entries(entries, key, library, label)
