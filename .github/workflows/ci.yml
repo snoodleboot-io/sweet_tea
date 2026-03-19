@@ -170,7 +170,7 @@ jobs:
 
     env:
       MAJOR_VERSION: 0
-      MINOR_VERSION: 2gi
+      MINOR_VERSION: 1
 
     steps:
       - uses: actions/checkout@v4
