@@ -58,7 +58,7 @@ class AbstractInverterFactory(Generic[T], InverterFactory):
         key: str,
         library: str = "",
         label: str = "",
-    ) -> Type[Any]:
+    ) -> Type[T]:
         """
         Retrieve the class definition for a registered class that is a subclass of the generic type.
 
