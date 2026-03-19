@@ -56,7 +56,7 @@ class AbstractFactory(Generic[T], Factory):
         library: str = "",
         label: str = "",
         configuration: dict[str, Any] | None = None,
-    ) -> Any:
+    ) -> T:
         """
         Create an instance of a registered class that is a subclass of the generic type.
 
