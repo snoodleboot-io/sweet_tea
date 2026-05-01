@@ -4,6 +4,7 @@ Tests for the Registry class functionality.
 
 import threading
 import time
+from typing import Any
 from unittest import TestCase
 
 from sweet_tea.registry import Registry
@@ -125,6 +126,97 @@ class TestRegistry(TestCase):
         # Verify no duplicates
         keys = [e.key for e in entries]
         self.assertEqual(len(set(keys)), len(keys), "Duplicate keys found")
+
+    def test_typed_entries_sees_registrations_made_after_first_query(self):
+        """Regression for GH #6: ancestor-type cache must refresh on later registers."""
+
+        class Animal:
+            pass
+
+        class Dog(Animal):
+            pass
+
+        # Prime the Animal lookup slot before any registration.
+        self.assertEqual(Registry.typed_entries(lookup_type=Animal), [])
+
+        Registry.register("dog", Dog, library="pets")
+
+        entries = Registry.typed_entries(lookup_type=Animal)
+        self.assertTrue(
+            any(e.class_def is Dog for e in entries),
+            "Dog should appear under Animal lookup after registration",
+        )
+
+    def test_typed_entries_with_any_sees_late_registrations(self):
+        """`Any` lookup_type must include classes registered after the first query."""
+
+        class LateClass:
+            pass
+
+        # Prime the Any cache while the registry is empty.
+        Registry.typed_entries(lookup_type=Any)
+
+        Registry.register("late", LateClass, library="late")
+
+        entries = Registry.typed_entries(lookup_type=Any)
+        self.assertTrue(any(e.class_def is LateClass for e in entries))
+
+    def test_typed_entries_does_not_double_count_on_re_register(self):
+        """Re-registering the same Entry must not duplicate it in cache slots."""
+
+        class Y:
+            pass
+
+        Registry.register("y", Y, library="dup")
+        Registry.register("y", Y, library="dup")
+
+        y_entries = [
+            e for e in Registry.typed_entries(lookup_type=Y) if e.class_def is Y
+        ]
+        self.assertEqual(len(y_entries), 1)
+
+    def test_typed_entries_multi_level_hierarchy_late_registration(self):
+        """Both grandparent and parent cache slots must refresh when a grandchild registers."""
+
+        class Animal:
+            pass
+
+        class Mammal(Animal):
+            pass
+
+        class Dog(Mammal):
+            pass
+
+        # Prime both ancestor slots before Dog exists in the registry.
+        self.assertEqual(Registry.typed_entries(lookup_type=Animal), [])
+        self.assertEqual(Registry.typed_entries(lookup_type=Mammal), [])
+
+        Registry.register("dog", Dog, library="pets")
+
+        animal_entries = Registry.typed_entries(lookup_type=Animal)
+        mammal_entries = Registry.typed_entries(lookup_type=Mammal)
+        self.assertTrue(any(e.class_def is Dog for e in animal_entries))
+        self.assertTrue(any(e.class_def is Dog for e in mammal_entries))
+
+    def test_typed_entries_unrelated_type_not_added_to_other_caches(self):
+        """Registering an unrelated class must not pollute existing cache slots."""
+
+        class Dog:
+            pass
+
+        class Cat:
+            pass
+
+        # Prime the Dog slot.
+        self.assertEqual(Registry.typed_entries(lookup_type=Dog), [])
+
+        Registry.register("cat", Cat, library="pets")
+
+        dog_entries = Registry.typed_entries(lookup_type=Dog)
+        self.assertFalse(
+            any(e.class_def is Cat for e in dog_entries),
+            "Cat must not appear under Dog lookup",
+        )
 
     def test_fill_registry_integration(self):
         """Integration test for fill_registry functionality."""
