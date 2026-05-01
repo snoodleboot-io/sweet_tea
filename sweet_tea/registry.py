@@ -110,9 +110,16 @@ class Registry:
             # Add entry if it is not currently present. Prevents duplicate entry.
             if new_entry not in cls.__registry:
                 cls.__registry.append(new_entry)
-
-            if class_def in cls.__lookup:
-                cls.__lookup[class_def].append(new_entry)
+                # Refresh every previously-queried lookup slot whose type matches
+                # this class. Without this, ancestor-type slots cached before the
+                # registration go stale (see GH #6).
+                for lookup_type in cls.__lookup_keys:
+                    if lookup_type is Any:
+                        cls.__lookup[lookup_type].append(new_entry)
+                    elif isinstance(lookup_type, type) and issubclass(
+                        class_def, lookup_type
+                    ):
+                        cls.__lookup[lookup_type].append(new_entry)
 
     @classmethod
     def fill_registry(
