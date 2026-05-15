@@ -1,6 +1,7 @@
 site_name: Sweet Tea Factory System
 site_description: A comprehensive Python factory pattern implementation
 site_author: snoodleboot, LLC
+site_url: https://snoodleboot-io.github.io/sweet_tea/
 
 repo_url: https://github.com/snoodleboot-io/sweet_tea
 repo_name: snoodleboot-io/sweet_tea
@@ -44,6 +45,7 @@ nav:
       - Registry: api/registry.md
       - Factory: api/factory.md
       - Abstract Factory: api/abstract-factory.md
+      - Abstract Inverter Factory: api/abstract-inverter-factory.md
       - Inverter Factory: api/inverter-factory.md
       - Singleton Factory: api/singleton-factory.md
       - Entry: api/entry.md
