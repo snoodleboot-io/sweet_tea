@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+<!-- Favicons -->
+<link rel="icon" type="image/x-icon" href="{{ config.site_url }}assets/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="{{ config.site_url }}assets/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ config.site_url }}assets/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="{{ config.site_url }}assets/favicon-96x96.png">
+
+<!-- Apple Touch Icons -->
+<link rel="apple-touch-icon" sizes="180x180" href="{{ config.site_url }}assets/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="152x152" href="{{ config.site_url }}assets/apple-touch-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="167x167" href="{{ config.site_url }}assets/apple-touch-icon-167x167.png">
+
+<!-- PWA -->
+<link rel="manifest" href="{{ config.site_url }}site.webmanifest">
+<meta name="theme-color" content="#f97316">
+
+<!-- Windows -->
+<meta name="msapplication-TileColor" content="#f97316">
+<meta name="msapplication-config" content="{{ config.site_url }}browserconfig.xml">
+
+<!-- Open Graph -->
+<meta property="og:title" content="Sweet Tea — Python's composable factory system">
+<meta property="og:description" content="Thread-safe. Type-safe. Zero magic. Register once, create anything.">
+<meta property="og:image" content="{{ config.site_url }}assets/og-image-1200x630.png">
+<meta property="og:url" content="{{ config.site_url }}">
+<meta property="og:type" content="website">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Sweet Tea — Python's composable factory system">
+<meta name="twitter:description" content="Thread-safe. Type-safe. Zero magic. Register once, create anything.">
+<meta name="twitter:image" content="{{ config.site_url }}assets/twitter-card-1200x600.png">
+{% endblock %}

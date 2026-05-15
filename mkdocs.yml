@@ -12,10 +12,10 @@ theme:
   font:
     text: Inter
     code: JetBrains Mono
+  logo: assets/logo.png
+  favicon: assets/favicon.ico
   icon:
     repo: fontawesome/brands/github
-    logo: material/cup-outline
-  favicon: assets/favicon.png
   palette:
     - scheme: slate
       primary: custom
