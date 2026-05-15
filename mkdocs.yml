@@ -1,5 +1,5 @@
-site_name: Sweet Tea Factory System
-site_description: A comprehensive Python factory pattern implementation
+site_name: Sweet Tea
+site_description: Python's most composable factory system. Thread-safe, type-safe, zero magic.
 site_author: snoodleboot, LLC
 site_url: https://snoodleboot-io.github.io/sweet_tea/
 
@@ -8,16 +8,44 @@ repo_name: snoodleboot-io/sweet_tea
 
 theme:
   name: material
+  custom_dir: docs/overrides
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/cup-outline
+  favicon: assets/favicon.png
   palette:
-    - scheme: dracula
-      primary: purple
-      accent: purple
+    - scheme: slate
+      primary: custom
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: custom
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to colorblind-friendly mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/eye-outline
+        name: Switch to dark mode
   features:
+    - navigation.instant
+    - navigation.instant.progress
     - navigation.tabs
     - navigation.sections
+    - navigation.indexes
+    - navigation.top
     - toc.integrate
     - search.suggest
     - search.highlight
+    - search.share
     - content.tabs.link
     - content.code.annotation
     - content.code.copy
@@ -38,10 +66,12 @@ plugins:
 nav:
   - Home: index.md
   - User Guide:
+      - user-guide/index.md
       - Getting Started: user-guide/getting-started.md
       - Basic Usage: user-guide/basic-usage.md
       - Advanced Features: user-guide/advanced-features.md
   - API Reference:
+      - api/index.md
       - Registry: api/registry.md
       - Factory: api/factory.md
       - Abstract Factory: api/abstract-factory.md
@@ -53,16 +83,22 @@ nav:
       - Contributing: development/contributing.md
       - Testing: development/testing.md
 
+extra_css:
+  - stylesheets/extra.css
+
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/snoodleboot-io/sweet_tea
-
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/sweet-tea/
   generator: false
 
 copyright: Copyright &copy; 2025 snoodleboot, LLC
 
 markdown_extensions:
+  - attr_list
+  - md_in_html
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span

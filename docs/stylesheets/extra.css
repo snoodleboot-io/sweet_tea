@@ -1,0 +1,277 @@
+/* ─── Brand tokens ────────────────────────────────────────────────────────── */
+:root {
+  --st-orange: #f97316;
+  --st-orange-dim: #ea6a08;
+  --st-surface: #0f111a;
+  --st-surface-raised: #161926;
+  --st-border: rgba(255, 255, 255, 0.07);
+}
+
+/* Dark mode (slate scheme) */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #0f111a;
+  --md-primary-fg-color--light: #161926;
+  --md-primary-fg-color--dark:  #080a11;
+  --md-accent-fg-color:         var(--st-orange);
+  --md-default-bg-color:        #0f111a;
+  --md-default-bg-color--light: #161926;
+  --md-code-bg-color:           #161926;
+  --md-typeset-a-color:         var(--st-orange);
+}
+
+/* Light mode (default scheme) */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #0f111a;
+  --md-primary-fg-color--light: #1e2130;
+  --md-primary-fg-color--dark:  #080a11;
+  --md-accent-fg-color:         var(--st-orange);
+  --md-typeset-a-color:         var(--st-orange-dim);
+  --md-code-bg-color:           #f4f5f7;
+}
+
+/* ─── Colorblind-friendly palette (3rd toggle) ────────────────────────────── */
+/*
+   Uses blue (#1d6fa4) + amber (#f59e0b) — safe for deuteranopia,
+   protanopia, and tritanopia. No red/green distinction required.
+*/
+[data-md-color-scheme="default"][data-md-color-accent="custom"] {
+  --md-accent-fg-color:   #1d6fa4;
+  --md-typeset-a-color:   #1d6fa4;
+}
+
+/* ─── Header ──────────────────────────────────────────────────────────────── */
+.md-header {
+  background-color: #080a11;
+  border-bottom: 1px solid var(--st-border);
+  box-shadow: none;
+}
+
+.md-header__title {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ─── Hero ────────────────────────────────────────────────────────────────── */
+.st-hero {
+  padding: 5rem 1.5rem 4rem;
+  text-align: center;
+  background: linear-gradient(160deg, #0f111a 60%, #1a0d05 100%);
+  border-bottom: 1px solid var(--st-border);
+  margin: -1.5rem -1.5rem 3rem;
+}
+
+[data-md-color-scheme="default"] .st-hero {
+  background: linear-gradient(160deg, #f4f5f7 60%, #fff4ed 100%);
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.st-hero__eyebrow {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--st-orange);
+  margin-bottom: 1.25rem;
+  padding: 0.3rem 0.8rem;
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  border-radius: 999px;
+  background: rgba(249, 115, 22, 0.08);
+}
+
+.st-hero h1 {
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+  margin: 0 0 1rem;
+  border: none;
+  color: #f8fafc;
+}
+
+[data-md-color-scheme="default"] .st-hero h1 {
+  color: #0f111a;
+}
+
+.st-hero__sub {
+  font-size: 1.15rem;
+  color: #94a3b8;
+  max-width: 520px;
+  margin: 0 auto 2rem;
+  line-height: 1.6;
+}
+
+[data-md-color-scheme="default"] .st-hero__sub {
+  color: #475569;
+}
+
+/* ─── Install block ───────────────────────────────────────────────────────── */
+.st-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #161926;
+  border: 1px solid var(--st-border);
+  border-radius: 10px;
+  padding: 0.65rem 1.1rem;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.95rem;
+  color: #e2e8f0;
+  margin-bottom: 2rem;
+}
+
+[data-md-color-scheme="default"] .st-install {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #0f172a;
+}
+
+.st-install__prompt {
+  color: var(--st-orange);
+  user-select: none;
+}
+
+/* ─── Badges ──────────────────────────────────────────────────────────────── */
+.st-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.st-badges img {
+  height: 20px;
+}
+
+/* ─── Feature grid ────────────────────────────────────────────────────────── */
+.st-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin: 2rem 0;
+}
+
+.st-card {
+  background: #161926;
+  border: 1px solid var(--st-border);
+  border-radius: 12px;
+  padding: 1.4rem 1.25rem;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+[data-md-color-scheme="default"] .st-card {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.st-card:hover {
+  border-color: var(--st-orange);
+  transform: translateY(-2px);
+}
+
+.st-card__icon {
+  font-size: 1.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.st-card__title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin-bottom: 0.35rem;
+  color: #f1f5f9;
+}
+
+[data-md-color-scheme="default"] .st-card__title {
+  color: #0f111a;
+}
+
+.st-card__body {
+  font-size: 0.85rem;
+  color: #94a3b8;
+  line-height: 1.55;
+}
+
+[data-md-color-scheme="default"] .st-card__body {
+  color: #64748b;
+}
+
+/* ─── CTA buttons ─────────────────────────────────────────────────────────── */
+.st-cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+  margin: 2.5rem 0 1rem;
+}
+
+.st-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.65rem 1.4rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none !important;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.st-btn:hover {
+  opacity: 0.88;
+  transform: translateY(-1px);
+}
+
+.st-btn--primary {
+  background: var(--st-orange);
+  color: #fff !important;
+}
+
+.st-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--st-border);
+  color: #cbd5e1 !important;
+}
+
+[data-md-color-scheme="default"] .st-btn--ghost {
+  border-color: #cbd5e1;
+  color: #475569 !important;
+}
+
+/* ─── Nav tweaks ──────────────────────────────────────────────────────────── */
+.md-nav__title {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+/* ─── Code blocks ─────────────────────────────────────────────────────────── */
+.md-typeset code {
+  font-size: 0.85em;
+}
+
+/* ─── Colorblind: swap accent everywhere it matters ───────────────────────── */
+[data-md-color-accent="custom"] .md-typeset a,
+[data-md-color-accent="custom"] .md-nav__link--active,
+[data-md-color-accent="custom"] .md-nav__link:hover {
+  color: #1d6fa4 !important;
+}
+
+[data-md-color-accent="custom"] .st-card:hover {
+  border-color: #1d6fa4;
+}
+
+[data-md-color-accent="custom"] .st-btn--primary {
+  background: #1d6fa4;
+}
+
+[data-md-color-accent="custom"] .st-hero__eyebrow {
+  color: #1d6fa4;
+  border-color: rgba(29, 111, 164, 0.35);
+  background: rgba(29, 111, 164, 0.08);
+}
+
+[data-md-color-accent="custom"] .st-install__prompt {
+  color: #1d6fa4;
+}
