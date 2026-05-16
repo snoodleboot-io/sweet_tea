@@ -41,6 +41,9 @@
 
 /* ─── Header ──────────────────────────────────────────────────────────────── */
 .md-header {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 200 !important;
   background-color: #080a11;
   border-bottom: 1px solid var(--st-border);
   box-shadow: none;
@@ -52,7 +55,37 @@
 }
 
 /* ─── Hero ────────────────────────────────────────────────────────────────── */
+.st-hero__logo-wrap {
+  position: absolute;
+  left: -8%;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.st-hero__bg-logo {
+  display: block;
+  height: clamp(180px, 45vw, 640px) !important;
+  width: auto !important;
+  max-width: none !important;
+  opacity: 0.15;
+  filter: saturate(0) brightness(2);
+}
+
+[data-md-color-scheme="default"] .st-hero__bg-logo {
+  opacity: 0.07;
+  filter: saturate(0) brightness(0);
+}
+
+.st-hero__content {
+  position: relative;
+  z-index: 1;
+}
+
 .st-hero {
+  position: relative;
+  overflow: hidden;
   padding: 5rem 1.5rem 4rem;
   text-align: center;
   background: linear-gradient(160deg, #0f111a 60%, #1a0d05 100%);
@@ -238,6 +271,12 @@
   color: #475569 !important;
 }
 
+/* ─── Kill header title cross-fade — instant swap, no visible animation ──── */
+.md-header__topic {
+  transition: none !important;
+  animation: none !important;
+}
+
 /* ─── Nav tweaks ──────────────────────────────────────────────────────────── */
 .md-nav__title {
   font-weight: 700;
@@ -249,6 +288,99 @@
 /* ─── Code blocks ─────────────────────────────────────────────────────────── */
 .md-typeset code {
   font-size: 0.85em;
+}
+
+/* ─── Mobile bottom nav ───────────────────────────────────────────────────── */
+.st-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 1219px) {
+  /* Flex layout: body is the column, md-container scrolls, nav is pinned at bottom.
+     No position:fixed needed — avoids all browser/DevTools fixed-positioning bugs. */
+  html,
+  body {
+    height: 100% !important;
+    overflow: hidden !important;
+  }
+
+  body {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  /* md-container is the scrolling area — takes all space above the nav */
+  .md-container {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+  }
+
+  /* hide top header and tabs — bottom nav is the only nav on mobile */
+  .md-header,
+  .md-tabs {
+    display: none !important;
+  }
+
+  /* clear any top padding added for the hidden header */
+  .md-main,
+  .md-main__inner {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+  }
+
+  /* nav is a static flex child — sits below md-container, never moves */
+  .st-bottom-nav {
+    display: flex !important;
+    flex-shrink: 0 !important;
+    position: static !important;
+    width: 100%;
+    background: #080a11;
+    border-top: 1px solid var(--st-border);
+    min-height: 56px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    z-index: 9999;
+  }
+
+  [data-md-color-scheme="default"] .st-bottom-nav {
+    background: #fff;
+    border-top-color: #e2e8f0;
+  }
+
+  .st-bottom-nav__item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.2rem;
+    padding: 0.6rem 0.25rem;
+    text-decoration: none !important;
+    color: #64748b !important;
+    font-size: 0.65rem;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    transition: color 0.15s;
+  }
+
+  .st-bottom-nav__item svg {
+    width: 1.35rem;
+    height: 1.35rem;
+    fill: currentColor;
+  }
+
+  .st-bottom-nav__item:hover,
+  .st-bottom-nav__item--active {
+    color: var(--st-orange) !important;
+  }
+
+  /* hero top padding is the visual gap on mobile — tighten it */
+  .st-hero {
+    padding-top: 1.5rem !important;
+  }
 }
 
 /* ─── Colorblind: swap accent everywhere it matters ───────────────────────── */
