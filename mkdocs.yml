@@ -1,4 +1,4 @@
-site_name: Sweet Tea
+site_name: sweet_tea
 site_description: Python's most composable factory system. Thread-safe, type-safe, zero magic.
 site_author: snoodleboot, LLC
 site_url: https://snoodleboot-io.github.io/sweet_tea/
@@ -36,8 +36,6 @@ theme:
         icon: material/eye-outline
         name: Switch to dark mode
   features:
-    - navigation.instant
-    - navigation.instant.progress
     - navigation.tabs
     - navigation.sections
     - navigation.indexes

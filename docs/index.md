@@ -5,6 +5,8 @@ hide:
 ---
 
 <div class="st-hero" markdown>
+<div class="st-hero__logo-wrap"><img src="assets/logo.png" class="st-hero__bg-logo" alt=""></div>
+<div class="st-hero__content" markdown>
 
 <span class="st-hero__eyebrow">Open Source · Python · snoodleboot</span>
 
@@ -19,12 +21,10 @@ Thread-safe. Type-safe. Zero magic.<br>Register once, create anything.
 </div>
 
 <div class="st-badges">
-
-[![PyPI](https://img.shields.io/pypi/v/sweet-tea?style=flat-square&logo=pypi&logoColor=white&color=f97316)](https://pypi.org/project/sweet-tea/)
-[![Python](https://img.shields.io/pypi/pyversions/sweet-tea?style=flat-square&logo=python&logoColor=white&color=f97316)](https://pypi.org/project/sweet-tea/)
-[![CI](https://img.shields.io/github/actions/workflow/status/snoodleboot-io/sweet_tea/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI&color=f97316)](https://github.com/snoodleboot-io/sweet_tea/actions)
-[![License](https://img.shields.io/pypi/l/sweet-tea?style=flat-square&color=f97316)](https://github.com/snoodleboot-io/sweet_tea/blob/main/LICENSE)
-
+  <a href="https://pypi.org/project/sweet-tea/"><img src="https://img.shields.io/pypi/v/sweet-tea?style=flat-square&logo=pypi&logoColor=white&color=f97316" alt="PyPI"></a>
+  <a href="https://pypi.org/project/sweet-tea/"><img src="https://img.shields.io/pypi/pyversions/sweet-tea?style=flat-square&logo=python&logoColor=white&color=f97316" alt="Python"></a>
+  <a href="https://github.com/snoodleboot-io/sweet_tea/actions"><img src="https://img.shields.io/github/actions/workflow/status/snoodleboot-io/sweet_tea/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI&color=f97316" alt="CI"></a>
+  <a href="https://github.com/snoodleboot-io/sweet_tea/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/sweet-tea?style=flat-square&color=f97316" alt="License"></a>
 </div>
 
 <div class="st-cta">
@@ -33,6 +33,7 @@ Thread-safe. Type-safe. Zero magic.<br>Register once, create anything.
   <a href="https://github.com/snoodleboot-io/sweet_tea" class="st-btn st-btn--ghost">GitHub</a>
 </div>
 
+</div>
 </div>
 
 ---
