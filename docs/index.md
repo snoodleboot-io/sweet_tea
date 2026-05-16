@@ -1,57 +1,156 @@
-# Sweet Tea Factory System
+---
+hide:
+  - navigation
+  - toc
+---
 
-A comprehensive, production-ready Python factory pattern implementation with advanced features for building extensible applications.
+<div class="st-hero" markdown>
+<div class="st-hero__logo-wrap"><img src="assets/logo.png" class="st-hero__bg-logo" alt=""></div>
+<div class="st-hero__content" markdown>
 
-## 🚀 Features
+<span class="st-hero__eyebrow">Open Source · Python · snoodleboot</span>
 
-- **Thread-Safe Registry**: Concurrent operations with RLock synchronization
-- **Type-Safe Generics**: Full TypeVar support with `__class_getitem__`
-- **Flexible Key Matching**: Support for ClassName, class_name, classname variations
-- **Optional Dependencies**: Graceful handling with custom warnings
-- **Auto-Registration**: Classes automatically registered via package imports
-- **Lazy Singletons**: SingletonFactory.create() for on-demand singleton instantiation
-- **Comprehensive Testing**: 58 tests with 97% coverage
+# The factory system<br>Python deserves
 
-## 📦 Installation
+Thread-safe. Type-safe. Zero magic.<br>Register once, create anything.
+{.st-hero__sub}
 
-```bash
-# Using uv (recommended)
-uv add sweet-tea
+<div class="st-install">
+  <span class="st-install__prompt">$</span>
+  <span>uv add sweet-tea</span>
+</div>
 
-# Using pip
-pip install sweet-tea
+<div class="st-badges">
+  <a href="https://pypi.org/project/sweet-tea/"><img src="https://img.shields.io/pypi/v/sweet-tea?style=flat-square&logo=pypi&logoColor=white&color=f97316" alt="PyPI"></a>
+  <a href="https://pypi.org/project/sweet-tea/"><img src="https://img.shields.io/pypi/pyversions/sweet-tea?style=flat-square&logo=python&logoColor=white&color=f97316" alt="Python"></a>
+  <a href="https://github.com/snoodleboot-io/sweet_tea/actions"><img src="https://img.shields.io/github/actions/workflow/status/snoodleboot-io/sweet_tea/ci.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI&color=f97316" alt="CI"></a>
+  <a href="https://github.com/snoodleboot-io/sweet_tea/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/sweet-tea?style=flat-square&color=f97316" alt="License"></a>
+</div>
 
-# Using Poetry
-poetry add sweet-tea
-```
+<div class="st-cta">
+  <a href="user-guide/getting-started/" class="st-btn st-btn--primary">Get started</a>
+  <a href="api/registry/" class="st-btn st-btn--ghost">API reference</a>
+  <a href="https://github.com/snoodleboot-io/sweet_tea" class="st-btn st-btn--ghost">GitHub</a>
+</div>
 
-## 🏁 Quick Start
+</div>
+</div>
 
-```python
-from sweet_tea import Factory, AbstractFactory, Registry
+---
 
-# Register a class
-Registry.register("my_service", MyServiceClass)
+## What's in the box
 
-# Create instances
-instance = Factory.create("my_service", configuration={"param": "value"})
+<div class="st-grid" markdown>
 
-# Use type-safe abstract factories
-service_factory = AbstractFactory[BaseService]
-instance = service_factory.create("implementation")
-```
+<div class="st-card" markdown>
+<div class="st-card__icon">🔒</div>
+<div class="st-card__title">Thread-Safe Registry</div>
+<div class="st-card__body">RLock-backed global registry. Concurrent reads and writes without races.</div>
+</div>
 
-## 📖 Documentation
+<div class="st-card" markdown>
+<div class="st-card__icon">🧬</div>
+<div class="st-card__title">Type-Safe Generics</div>
+<div class="st-card__body">Full TypeVar support with <code>__class_getitem__</code>. Your IDE stays happy.</div>
+</div>
 
-- [Getting Started](user-guide/getting-started.md) - Installation and basic setup
-- [Basic Usage](user-guide/basic-usage.md) - Core factory patterns
-- [Advanced Features](user-guide/advanced-features.md) - Type constraints and threading
-- [API Reference](api/registry.md) - Complete API documentation
+<div class="st-card" markdown>
+<div class="st-card__icon">🔍</div>
+<div class="st-card__title">Flexible Key Matching</div>
+<div class="st-card__body"><code>MyClass</code>, <code>my_class</code>, or <code>myclass</code> — all resolve to the same entry.</div>
+</div>
 
-## 🤝 Contributing
+<div class="st-card" markdown>
+<div class="st-card__icon">🔁</div>
+<div class="st-card__title">Lazy Singletons</div>
+<div class="st-card__body">SingletonFactory caches on first create. No decorators, no metaclasses.</div>
+</div>
 
-We welcome contributions! See our [contributing guide](development/contributing.md) for details.
+<div class="st-card" markdown>
+<div class="st-card__icon">🔌</div>
+<div class="st-card__title">Optional Dependencies</div>
+<div class="st-card__body">Graceful fallbacks with clear warnings. Nothing blows up at import time.</div>
+</div>
 
-## 📄 License
+<div class="st-card" markdown>
+<div class="st-card__icon">📦</div>
+<div class="st-card__title">Auto-Registration</div>
+<div class="st-card__body">Call <code>fill_registry()</code> and every class in your package is registered instantly.</div>
+</div>
 
-Copyright © 2025 snoodleboot, LLC. Licensed under the Apache License 2.0.
+</div>
+
+---
+
+## 60-second quickstart
+
+=== "Factory"
+
+    ```python
+    from sweet_tea import Registry, Factory
+
+    class PostgresDB:
+        def __init__(self, host="localhost", port=5432):
+            self.host = host
+
+    Registry.register("postgres", PostgresDB)
+
+    db = Factory.create("postgres", configuration={"host": "prod.db"})
+    ```
+
+=== "Singleton"
+
+    ```python
+    from sweet_tea import Registry, SingletonFactory
+
+    class AppConfig:
+        def __init__(self, env="prod"):
+            self.env = env
+
+    Registry.register("config", AppConfig)
+
+    # Same instance every time
+    cfg = SingletonFactory.create("config", configuration={"env": "staging"})
+    ```
+
+=== "Abstract (type-safe)"
+
+    ```python
+    from sweet_tea import Registry, AbstractFactory
+
+    class BaseService: ...
+
+    class EmailService(BaseService): ...
+
+    Registry.register("email", EmailService)
+
+    # Only accepts subclasses of BaseService
+    svc_factory = AbstractFactory[BaseService]
+    svc = svc_factory.create("email")
+    ```
+
+---
+
+## Installation
+
+=== "uv (recommended)"
+
+    ```bash
+    uv add sweet-tea
+    ```
+
+=== "pip"
+
+    ```bash
+    pip install sweet-tea
+    ```
+
+=== "Poetry"
+
+    ```bash
+    poetry add sweet-tea
+    ```
+
+---
+
+*Built by [snoodleboot, LLC](https://github.com/snoodleboot-io) · Apache 2.0*
