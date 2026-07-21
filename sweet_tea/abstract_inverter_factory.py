@@ -20,14 +20,15 @@ of class definitions that are subclasses of a specified generic type, enabling
 type-safe factory patterns for lazy construction scenarios.
 """
 
-from typing import Any, Generic, Type, TypeVar
+from typing import Generic, Type, TypeVar
 
 from sweet_tea.inverter_factory import InverterFactory
+from sweet_tea.type_parameterized_factory import TypeParameterizedFactory
 
 T = TypeVar("T")
 
 
-class AbstractInverterFactory(Generic[T], InverterFactory):
+class AbstractInverterFactory(TypeParameterizedFactory, Generic[T], InverterFactory):
     """
     A generic inverter factory that constrains class retrieval to subclasses of type T.
 
@@ -36,21 +37,10 @@ class AbstractInverterFactory(Generic[T], InverterFactory):
         class_def = factory.create('my_key')
         # Only classes inheriting from MyBaseClass will be available
         instance = class_def(**kwargs)  # Instantiate when ready
+
+    Each parameterization is an independent subclass, so several may be held and
+    used in any order without interfering with one another.
     """
-
-    _type = T  # type: ignore[misc]
-
-    @classmethod
-    def __class_getitem__(cls, item: Type[T]) -> Type["AbstractInverterFactory[T]"]:
-        """Create a parameterized generic subclass with the specified type."""
-        result = super().__class_getitem__(item)  # type: ignore[attr-defined,misc]
-        result._type = item  # type: ignore[misc]
-        return result
-
-    @classmethod
-    def _get_generic_type(cls) -> Type[T]:
-        """Get the generic type parameter."""
-        return cls._type
 
     @classmethod
     def create(
