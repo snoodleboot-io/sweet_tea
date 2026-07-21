@@ -31,8 +31,8 @@ along two independent axes. *Instance vs. class definition*: `Factory` returns
 `class_def(**configuration)`, `InverterFactory` returns the bare class for you
 to construct later. *Untyped vs. type-constrained*: `AbstractFactory[Base]` and
 `AbstractInverterFactory[Base]` restrict candidates to subclasses of `Base`.
-`SingletonFactory` sits outside the grid — it caches by key and returns the
-same instance on every call.
+`SingletonFactory` sits outside the grid — it caches against the resolved
+registry entry and returns the same instance on every call.
 
 Subscripting a factory (`AbstractFactory[Base]`) returns a genuine cached
 subclass, not a `typing` alias, and `AbstractFactory[Base] is
@@ -162,22 +162,6 @@ nothing else. No name is re-exported, so this fails at import time with
 **Do instead:** import from the submodule — `from sweet_tea.factory import
 Factory`, `from sweet_tea.registry import Registry`.
 
-### Spelling a SingletonFactory key differently between calls
-
-**Looks right because:** `Factory` accepts `"PostgresConnection"`,
-`"postgres_connection"`, and `"postgresconnection"` interchangeably, so the
-key spelling reads as free-form throughout the API.
-**Wrong because:** `SingletonFactory.create` caches under the *first* key
-variation rather than the resolved registry key, so each distinct spelling gets
-its own cache slot. `SingletonFactory.create("PostgresConnection")` and
-`SingletonFactory.create("postgres_connection")` return **two different
-instances** and `list_singletons()` shows both. No error is raised — the
-singleton guarantee is silently broken, and the second instance holds its own
-connection, cache, or file handle.
-**Do instead:** pick one spelling and use it verbatim at every call site. The
-class's own `__name__` is the reliable choice:
-`SingletonFactory.create(key=PostgresConnection.__name__)`.
-
 ### Reading "key not present" as "the class was never registered"
 
 **Looks right because:** the message is unambiguous —
@@ -246,10 +230,15 @@ the exact variation matches first. When a returned object surprises you, check
 - **`SingletonFactory.list_keys()` does not list singletons**: it returns every
   key in the registry, whether instantiated or not. The cached instances are
   `list_singletons()`.
-- **`SingletonFactory` caches independently of `library` and `label`**: the
-  cache key is derived from `key` alone, so two same-named classes in different
-  libraries share one slot — whichever is requested first wins for the process
-  lifetime.
+- **`SingletonFactory` caches against the resolved registry entry**: the cache
+  key is `(key, library, label)` of the entry that matched, not the spelling you
+  passed. Every spelling of one key returns one instance, and entries differing
+  only by `library` or `label` get separate instances. `pop` takes the same
+  filters — `pop(key="Conn", library="redis")` — and popping without them cannot
+  reach an entry that needed a filter to resolve.
+- **The first call's `configuration` wins**: later calls return the cached
+  instance and ignore their `configuration` argument entirely. No error marks
+  the discarded config.
 
 ---
 
@@ -269,7 +258,7 @@ the exact variation matches first. When a returned object surprises you, check
 | See everything registered | `Registry.entries()` |
 | See what a base type matches | `Registry.typed_entries(lookup_type=Base)` |
 | Reset between tests | `Registry._Registry__registry.clear()` + `__lookup` + `__lookup_keys`; `SingletonFactory.clear()` |
-| Drop one cached singleton | `SingletonFactory.pop(key="Cls")` |
+| Drop one cached singleton | `SingletonFactory.pop(key="Cls")`, plus `library=`/`label=` if the entry needed them |
 | Catch any failure | `except SweetTeaError` |
 
 ---

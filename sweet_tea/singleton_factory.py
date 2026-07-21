@@ -25,7 +25,6 @@ import threading
 from typing import Any, Dict
 
 from sweet_tea.base_factory import BaseFactory
-from sweet_tea.factory import Factory
 from sweet_tea.sweet_tea_error import SweetTeaError
 
 
@@ -47,8 +46,11 @@ class SingletonFactory(BaseFactory):
     # Threading lock for synchronizing operations
     __lock = threading.RLock()
 
-    # Registry of singleton instances
-    __instances: Dict[str, Any] = {}
+    # Cached instances, keyed by the identity of the registry entry they were built
+    # from: (key, library, label). Keying on the resolved entry rather than on the
+    # caller's spelling is what makes the singleton guarantee hold — every spelling
+    # of one key resolves to the same entry and therefore the same slot (see SWE-5).
+    __instances: Dict[tuple[str, str, str], Any] = {}
 
     # Logger instance
     _logger = logging.getLogger(__name__)
@@ -79,23 +81,23 @@ class SingletonFactory(BaseFactory):
         Raises:
             SweetTeaError: If the key is not found in the registry or filters don't match.
         """
-        # Find the normalized key using the same logic as Factory
-        key_variations = cls._generate_key_variations(key)
-        normalized_key = key_variations[0] if key_variations else key.lower()
-
         with cls.__lock:
-            # Return existing instance if available
-            if normalized_key in cls.__instances:
-                return cls.__instances[normalized_key]
+            # Resolve through the shared path first, so the cache is keyed on the entry
+            # that would be instantiated rather than on however the caller spelled it.
+            # Resolution happens inside the lock so two threads cannot both miss the
+            # cache and each construct an instance.
+            entry = cls._select_entry(cls._find_entries(key), key, library, label)
+            cache_key = (entry.key, entry.library, entry.label)
 
-            # Create new instance using the regular Factory
-            new_instance = Factory.create(
-                key=key, library=library, label=label, configuration=configuration
-            )
+            # Return existing instance if available
+            if cache_key in cls.__instances:
+                return cls.__instances[cache_key]
+
+            new_instance = entry.class_def(**(configuration or {}))
 
             # Register the new instance as a singleton
-            cls.__instances[normalized_key] = new_instance
-            cls._logger.info(f"Created and registered singleton instance: {key}")
+            cls.__instances[cache_key] = new_instance
+            cls._logger.info(f"Created and registered singleton instance: {entry.key}")
 
             return new_instance
 
@@ -112,53 +114,48 @@ class SingletonFactory(BaseFactory):
             cls._logger.info(f"Cleared {count} singleton instances")
 
     @classmethod
-    def pop(cls, key: str) -> Any:
+    def pop(cls, key: str, library: str = "", label: str = "") -> Any:
         """
-        Remove and return a registered instance.
+        Remove and return a cached instance.
 
-        This removes the instance and all its key variations from the registry,
-        ensuring complete cleanup of the singleton.
+        Resolves through the same path as :meth:`create`, so any spelling of the key
+        removes the instance that spelling would have returned.
 
         Args:
-            key: The key of the instance to remove.
+            key: The key of the instance to remove, in any supported spelling.
+            library: Optional library filter, matching the one passed to create.
+            label: Optional label filter, matching the one passed to create.
 
         Returns:
             The removed instance.
 
         Raises:
-            SweetTeaError: If no instance is registered for the given key.
+            SweetTeaError: If no instance is cached for the given key.
         """
-        # Find all key variations that could match
-        key_variations = cls._generate_key_variations(key)
-
         with cls.__lock:
-            # Find which variation actually has the instance
-            instance = None
-            found_key = None
+            try:
+                entry = cls._select_entry(cls._find_entries(key), key, library, label)
+            except SweetTeaError:
+                # Unresolvable keys and resolvable-but-uncached ones report the same
+                # way; from the caller's side both mean "nothing to remove".
+                entry = None
 
-            for variation in key_variations:
-                if variation in cls.__instances:
-                    instance = cls.__instances[variation]
-                    found_key = variation
-                    break
+            cache_key = (
+                (entry.key, entry.library, entry.label) if entry is not None else None
+            )
 
-            if instance is None:
-                available_keys = list(cls.__instances.keys())
+            if cache_key is None or cache_key not in cls.__instances:
                 raise SweetTeaError(
                     f"No singleton instance registered for key '{key}'. "
-                    f"Available keys: {available_keys}"
+                    f"Available keys: {cls.list_singletons()}"
                 )
 
-            # Remove all variations that could match this instance
-            # This ensures complete cleanup of the singleton
-            for variation in key_variations:
-                if variation in cls.__instances:
-                    del cls.__instances[variation]
+            instance = cls.__instances.pop(cache_key)
 
             # Python's garbage collector will handle destruction automatically
             # when all references are removed
 
-            cls._logger.info(f"Removed singleton instance: {key} (key: {found_key})")
+            cls._logger.info(f"Removed singleton instance: {key} (key: {entry.key})")
             return instance
 
     @classmethod
@@ -179,7 +176,8 @@ class SingletonFactory(BaseFactory):
         Get a list of all cached singleton instance keys.
 
         Returns:
-            List of registered singleton keys in alphabetical order.
+            List of cached singleton keys in alphabetical order. Entries that share a
+            key across libraries or labels appear once per cached instance.
         """
         with cls.__lock:
-            return sorted(cls.__instances.keys())
+            return sorted(entry_key for entry_key, _, _ in cls.__instances)
