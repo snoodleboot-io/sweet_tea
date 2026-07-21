@@ -155,7 +155,9 @@ class SingletonFactory(BaseFactory):
             # Python's garbage collector will handle destruction automatically
             # when all references are removed
 
-            cls._logger.info(f"Removed singleton instance: {key} (key: {entry.key})")
+            # Reported off cache_key rather than entry: the None check above narrows
+            # cache_key but not entry, and both carry the same resolved key.
+            cls._logger.info(f"Removed singleton instance: {key} (key: {cache_key[0]})")
             return instance
 
     @classmethod
