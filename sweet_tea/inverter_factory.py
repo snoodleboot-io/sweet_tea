@@ -24,7 +24,6 @@ from typing import Any, Type
 
 from sweet_tea.base_factory import BaseFactory
 from sweet_tea.entry import Entry
-from sweet_tea.sweet_tea_error import SweetTeaError
 
 
 class InverterFactory(BaseFactory):
@@ -101,35 +100,5 @@ class InverterFactory(BaseFactory):
         Raises:
             SweetTeaError: When no matching entry is found or multiple entries remain after filtering.
         """
-        if len(entries) == 0:
-            error_message = f"The key {key} not present."
-            cls._logger.error(error_message)
-            raise SweetTeaError(error_message)
-
-        # If a library filter was specified, filter entries by library
-        if library:
-            entries = [entry for entry in entries if entry.library == library.lower()]
-            if len(entries) == 0:
-                error_message = f"The library {library} not present for key {key}."
-                cls._logger.error(error_message)
-                raise SweetTeaError(error_message)
-
-        # If a label filter was specified, filter entries by label
-        if label:
-            entries = [entry for entry in entries if entry.label == label.lower()]
-            if len(entries) == 0:
-                error_message = f"The label {label} not present for key {key}."
-                cls._logger.error(error_message)
-                raise SweetTeaError(error_message)
-
-        # If more than one entry remains, the filters are insufficient
-        if len(entries) > 1:
-            error_message = (
-                f"The combination of key {key}, label {label}, and library {library} did not return "
-                f"a unique result. A total of {len(entries)} possible entries were found."
-            )
-            cls._logger.error(error_message)
-            raise SweetTeaError(error_message)
-
         # Return the class definition (not instantiated)
-        return entries[0].class_def
+        return cls._select_entry(entries, key, library, label).class_def
