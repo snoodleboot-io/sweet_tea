@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import fnmatch
 import importlib
 import inspect
 import logging
@@ -19,6 +20,7 @@ import pkgutil
 import threading
 import traceback
 import warnings
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +130,7 @@ class Registry:
         module: str | None = None,
         library: str = "",
         label: str = "",
+        exclude: Iterable[str] | None = None,
     ) -> None:
         """
         Recursively scan and register classes from packages starting from the given path.
@@ -140,11 +143,26 @@ class Registry:
         no flag is needed to opt in to the latter. Directories that cannot be imported
         are ignored — see :meth:`__is_namespace_package` for the exact rules.
 
+        Directories that *are* importable but should not be registered — ``tests``,
+        ``fixtures``, ``examples`` — cannot be detected automatically, since they are
+        legitimate Python. Name them via ``exclude``:
+
+        .. code-block:: python
+
+            Registry.fill_registry(exclude=["*.tests", "*.examples"])
+
+        Excluding a package prunes its whole subtree, so a single pattern is enough to
+        drop everything beneath it.
+
         Args:
             path: Package path where modules are located. If None, uses the caller's module path.
             module: Name of the root module. If None, inferred from path.
             library: Name of the library for categorization.
             label: Optional label for categorizing classes.
+            exclude: Glob patterns matched case-sensitively against the full dotted
+                module path (``mypkg.sub.tests``). Matching modules are not imported and
+                matching packages are not descended into. Applies to regular and
+                namespace packages alike.
         """
         with cls.__lock:
             # Determine the path to scan
@@ -167,10 +185,23 @@ class Registry:
             # Location of package
             pkg_dir = path_str
 
+            # Materialised once so the recursive calls below share a single tuple rather
+            # than re-consuming a caller-supplied iterator, which would be exhausted
+            # after the first subpackage.
+            exclude_patterns = tuple(exclude or ())
+
             # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
             # module imports the module and registers it.
             for name, is_a_package in cls.__iter_package_children(pkg_dir):
                 pkg_name = f"{module}.{name}"
+                if cls.__is_excluded(pkg_name, exclude_patterns):
+                    # Logged rather than dropped silently; an under-filled registry with
+                    # no explanation is the failure mode this whole area keeps hitting.
+                    cls.__logger.debug(
+                        f"Skipping {pkg_name}: matched an exclude pattern"
+                    )
+                    continue
+
                 if not is_a_package:
                     cls.__add_entry_to_registry(
                         label=label, library=library, name_of_package=pkg_name
@@ -182,7 +213,26 @@ class Registry:
                         module=pkg_name,
                         library=library,
                         label=label,
+                        exclude=exclude_patterns,
                     )
+
+    @classmethod
+    def __is_excluded(cls, dotted_name: str, patterns: tuple[str, ...]) -> bool:
+        """
+        Test a dotted module path against the caller's exclude patterns.
+
+        Uses :func:`fnmatch.fnmatchcase` rather than :func:`fnmatch.fnmatch`; the latter
+        applies ``os.path.normcase``, making matches case-insensitive on Windows. Module
+        names are case-sensitive, so matching must not vary by platform.
+
+        Args:
+            dotted_name: Full dotted path of the module or package under consideration.
+            patterns: Glob patterns supplied by the caller.
+
+        Returns:
+            True when any pattern matches.
+        """
+        return any(fnmatch.fnmatchcase(dotted_name, pattern) for pattern in patterns)
 
     @classmethod
     def __iter_package_children(cls, pkg_dir: str) -> list[tuple[str, bool]]:
