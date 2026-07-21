@@ -136,6 +136,10 @@ class Registry:
         supporting optional dependencies by gracefully skipping modules that fail
         to import due to missing packages.
 
+        Both regular packages and implicit namespace packages (PEP 420) are traversed;
+        no flag is needed to opt in to the latter. Directories that cannot be imported
+        are ignored — see :meth:`__is_namespace_package` for the exact rules.
+
         Args:
             path: Package path where modules are located. If None, uses the caller's module path.
             module: Name of the root module. If None, inferred from path.
@@ -165,7 +169,7 @@ class Registry:
 
             # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
             # module imports the module and registers it.
-            for _, name, is_a_package in pkgutil.iter_modules([pkg_dir]):
+            for name, is_a_package in cls.__iter_package_children(pkg_dir):
                 pkg_name = f"{module}.{name}"
                 if not is_a_package:
                     cls.__add_entry_to_registry(
@@ -179,6 +183,82 @@ class Registry:
                         library=library,
                         label=label,
                     )
+
+    @classmethod
+    def __iter_package_children(cls, pkg_dir: str) -> list[tuple[str, bool]]:
+        """
+        List the importable children of a package directory.
+
+        Extends :func:`pkgutil.iter_modules`, which reports a subdirectory only when it
+        contains an ``__init__``. Implicit namespace packages (PEP 420) have no
+        ``__init__`` and are therefore invisible to it — not reported as a package and
+        not reported as a module — so their contents were silently skipped during
+        registry filling.
+
+        Args:
+            pkg_dir: Directory to scan.
+
+        Returns:
+            Sorted (name, is_a_package) pairs, with namespace packages included.
+        """
+        children: dict[str, bool] = {
+            name: is_a_package
+            for _, name, is_a_package in pkgutil.iter_modules([pkg_dir])
+        }
+
+        if os.path.isdir(pkg_dir):
+            with os.scandir(pkg_dir) as directory_entries:
+                for directory_entry in directory_entries:
+                    if directory_entry.name in children:
+                        continue
+                    if not directory_entry.is_dir(follow_symlinks=False):
+                        continue
+                    if cls.__is_namespace_package(
+                        directory_entry.name, directory_entry.path
+                    ):
+                        children[directory_entry.name] = True
+
+        return sorted(children.items())
+
+    @classmethod
+    def __is_namespace_package(cls, name: str, path: str) -> bool:
+        """
+        Decide whether a directory lacking ``__init__`` should be treated as a package.
+
+        ``__init__.py`` used to act as a de-facto opt-in marker, so treating every bare
+        directory as a package risks descending into directories that are not packages
+        at all. These filters restore that boundary without making users opt in to
+        namespace support.
+
+        Args:
+            name: Directory name.
+            path: Full path to the directory.
+
+        Returns:
+            True when the directory is a plausible namespace package.
+        """
+        # Not importable under any circumstances - 'my-pkg', 'v1.2', 'sample data'.
+        if not name.isidentifier():
+            return False
+
+        # Hidden ('.venv', '.git') and private or generated ('__pycache__') directories.
+        if name.startswith(".") or name.startswith("_"):
+            return False
+
+        # A namespace package must eventually lead to a module; a directory holding only
+        # data files is not one. Nested namespace packages are legal, so this recurses.
+        with os.scandir(path) as directory_entries:
+            for directory_entry in directory_entries:
+                if directory_entry.is_file(follow_symlinks=False):
+                    if inspect.getmodulename(directory_entry.name) is not None:
+                        return True
+                elif directory_entry.is_dir(follow_symlinks=False):
+                    if cls.__is_namespace_package(
+                        directory_entry.name, directory_entry.path
+                    ):
+                        return True
+
+        return False
 
     @classmethod
     def __add_entry_to_registry(
