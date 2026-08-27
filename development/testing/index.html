@@ -1332,15 +1332,19 @@
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">Registry</span><span class="o">.</span><span class="n">_Registry__lookup</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">Registry</span><span class="o">.</span><span class="n">_Registry__lookup_keys</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
 </span></code></pre></div>
+<p>Clearing these three is still the whole recipe. <code>Registry</code> also keeps a hash index of
+registered entries (<code>__seen</code>) so duplicate detection does not scan the list, but it
+notices that the registry was cleared underneath it and rebuilds itself on the next
+<code>register</code> call.</p>
 <h3 id="factory-testing">Factory Testing</h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Test configuration passing</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">instance</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">&quot;my_class&quot;</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;param&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">})</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">assert</span> <span class="n">instance</span><span class="o">.</span><span class="n">param</span> <span class="o">==</span> <span class="s2">&quot;value&quot;</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">instance</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"my_class"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"param"</span><span class="p">:</span> <span class="s2">"value"</span><span class="p">})</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">assert</span> <span class="n">instance</span><span class="o">.</span><span class="n">param</span> <span class="o">==</span> <span class="s2">"value"</span>
 </span></code></pre></div>
 <h3 id="error-testing">Error Testing</h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Test exception handling</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="n">SweetTeaError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">&quot;expected message&quot;</span><span class="p">):</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">&quot;nonexistent&quot;</span><span class="p">)</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="n">SweetTeaError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">"expected message"</span><span class="p">):</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"nonexistent"</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="continuous-integration">Continuous Integration</h2>
 <p>Tests run automatically via:
