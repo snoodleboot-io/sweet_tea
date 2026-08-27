@@ -64,6 +64,11 @@ def setup_method(self):
     Registry._Registry__lookup_keys.clear()
 ```
 
+Clearing these three is still the whole recipe. `Registry` also keeps a hash index of
+registered entries (`__seen`) so duplicate detection does not scan the list, but it
+notices that the registry was cleared underneath it and rebuilds itself on the next
+`register` call.
+
 ### Factory Testing
 ```python
 # Test configuration passing
