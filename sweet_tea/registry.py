@@ -50,6 +50,14 @@ class Registry:
     # This is the registry of packages
     __registry: list[Entry] = []
 
+    # Hash index mirroring __registry, holding the identity of every entry already in
+    # it. register() used to test membership with ``new_entry not in cls.__registry``,
+    # a linear scan calling Entry.__eq__ — a pydantic structural compare — on every
+    # element, so filling a registry of n entries cost n(n-1)/2 of them (SWE-6). The
+    # tuple holds exactly the four fields Entry.__eq__ compares, so which registrations
+    # count as duplicates is unchanged.
+    __seen: set[tuple[str, type, str, str]] = set()
+
     __lookup: dict[Any, list[Entry]] = {}
 
     __lookup_keys: list[Any] = []
@@ -108,9 +116,20 @@ class Registry:
             label=label.lower(),
         )
 
+        # key/library/label are lowercased above, so this compares the same normalised
+        # values Entry.__eq__ would; class_def is a type and therefore hashable.
+        dedupe_key = (
+            new_entry.key,
+            new_entry.class_def,
+            new_entry.library,
+            new_entry.label,
+        )
+
         with cls.__lock:
+            cls.__resync_seen()
             # Add entry if it is not currently present. Prevents duplicate entry.
-            if new_entry not in cls.__registry:
+            if dedupe_key not in cls.__seen:
+                cls.__seen.add(dedupe_key)
                 cls.__registry.append(new_entry)
                 # Refresh every previously-queried lookup slot whose type matches
                 # this class. Without this, ancestor-type slots cached before the
@@ -122,6 +141,33 @@ class Registry:
                         class_def, lookup_type
                     ):
                         cls.__lookup[lookup_type].append(new_entry)
+
+    @classmethod
+    def __resync_seen(cls) -> None:
+        """
+        Rebuild the dedupe index if ``__registry`` was mutated behind its back.
+
+        ``register`` is the only writer in this class and keeps the two in step, but the
+        documented way to reset state between tests is to clear the underlying list
+        directly — ``Registry._Registry__registry.clear()`` (see
+        ``docs/development/testing.md``). An index left holding the cleared entries would
+        make every re-registration after such a reset look like a duplicate and silently
+        drop it, so the two are reconciled before each membership test.
+
+        Comparing lengths keeps the normal, in-step path O(1); the O(n) rebuild runs only
+        after an outside mutation. A mutation that happens to preserve the length is not
+        detected — clearing and replacing wholesale, the only supported reset, is.
+
+        The caller must hold ``__lock``.
+        """
+        if len(cls.__seen) != len(cls.__registry):
+            # Mutated in place rather than rebound, so any existing reference to the set
+            # keeps seeing the live index.
+            cls.__seen.clear()
+            cls.__seen.update(
+                (entry.key, entry.class_def, entry.library, entry.label)
+                for entry in cls.__registry
+            )
 
     @classmethod
     def fill_registry(

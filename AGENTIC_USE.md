@@ -198,7 +198,8 @@ the exact variation matches first. When a returned object surprises you, check
   public `clear()`. Tests reach into the name-mangled internals
   (`Registry._Registry__registry.clear()`, plus `__lookup` and `__lookup_keys`)
   — do the same in a `setUp`, and clear all three or stale lookup caches leak
-  between tests.
+  between tests. Those three are the whole recipe: the `__seen` dedupe index
+  rebuilds itself when it notices the registry was cleared underneath it.
 - **`fill_registry()` without `path` infers the caller's directory from the
   stack**: it needs a real module file. From a REPL, `python -c`, or `exec` it
   raises `SweetTeaError: Cannot determine module path automatically`. Pass
