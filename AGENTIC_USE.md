@@ -110,6 +110,12 @@ Registry.fill_registry(library="db", exclude=["*.tests"])
 positional-only parameters cannot be built by `Factory`; register it with
 `InverterFactory` instead and construct it yourself.
 
+`configuration` may be a dict or a pydantic `BaseModel`. A model is spread as
+`class_def(**dict(model))` — shallow, so nested models arrive as models, every field
+(defaults included) is sent, and `extra="allow"` extras are included. It is never
+passed as a single positional argument; to hand a class the model itself, use
+`configuration={"settings": model}`.
+
 **Must not:** rely on the constructor being called with no arguments when
 `configuration` is omitted — it is called as `class_def()`, so any parameter
 without a default raises `TypeError` from your own `__init__`, not from

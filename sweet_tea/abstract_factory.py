@@ -20,6 +20,8 @@ generic type, enabling type-safe factory patterns.
 
 from typing import Any, Generic, TypeVar
 
+from pydantic import BaseModel
+
 from sweet_tea.factory import Factory
 from sweet_tea.type_parameterized_factory import TypeParameterizedFactory
 
@@ -45,7 +47,7 @@ class AbstractFactory(TypeParameterizedFactory, Generic[T], Factory):
         key: str,
         library: str = "",
         label: str = "",
-        configuration: dict[str, Any] | None = None,
+        configuration: dict[str, Any] | BaseModel | None = None,
     ) -> T:
         """
         Create an instance of a registered class that is a subclass of the generic type.
@@ -54,7 +56,8 @@ class AbstractFactory(TypeParameterizedFactory, Generic[T], Factory):
             key: Name to reference the class from the registry.
             library: Optional library filter for the class.
             label: Optional label filter for the class.
-            configuration: Configuration parameters as keyword arguments.
+            configuration: Configuration parameters as keyword arguments, given as a
+                dict or a pydantic model whose fields are spread into the constructor.
 
         Returns:
             Configured instance of the requested class.

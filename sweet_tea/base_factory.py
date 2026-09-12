@@ -17,7 +17,9 @@ Base factory class with common functionality for key handling and registry acces
 
 import logging
 import re
-from typing import Type
+from typing import Any, Type
+
+from pydantic import BaseModel
 
 from sweet_tea.entry import Entry
 from sweet_tea.registry import Registry
@@ -119,6 +121,39 @@ class BaseFactory:
                 return matched
 
         return []
+
+    @classmethod
+    def _construct(
+        cls, entry: Entry, configuration: dict[str, Any] | BaseModel | None
+    ) -> Any:
+        """
+        Instantiate an entry's class, spreading the configuration as keyword arguments.
+
+        This is the single construction path for every instantiating factory, so dict
+        and model configurations behave identically wherever they are accepted.
+
+        A BaseModel is converted with ``dict(model)`` rather than ``model_dump()``.
+        ``dict`` is shallow: nested models and arbitrary objects reach the class as
+        themselves, keyed on field names, with ``extra="allow"`` extras included.
+        ``model_dump`` would recursively serialize nested models into plain dicts,
+        silently changing the types the class receives (see SWE-7). Every field is
+        sent, including defaults, so a model default overrides the class's own.
+
+        Args:
+            entry: The resolved registry entry to instantiate.
+            configuration: Keyword arguments as a dict or a pydantic model; None
+                constructs with no arguments.
+
+        Returns:
+            The constructed instance.
+        """
+        if configuration is None:
+            kwargs: dict[str, Any] = {}
+        elif isinstance(configuration, BaseModel):
+            kwargs = dict(configuration)
+        else:
+            kwargs = configuration
+        return entry.class_def(**kwargs)
 
     @classmethod
     def _select_entry(

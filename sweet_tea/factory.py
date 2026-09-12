@@ -18,6 +18,8 @@ Base factory implementation for instantiating registered classes.
 import logging
 from typing import Any
 
+from pydantic import BaseModel
+
 from sweet_tea.base_factory import BaseFactory
 from sweet_tea.entry import Entry
 
@@ -38,7 +40,7 @@ class Factory(BaseFactory):
         key: str,
         library: str = "",
         label: str = "",
-        configuration: dict[str, Any] | None = None,
+        configuration: dict[str, Any] | BaseModel | None = None,
     ) -> Any:
         """
         Create an instance of a registered class.
@@ -47,7 +49,8 @@ class Factory(BaseFactory):
             key: Name to reference the class from the registry.
             library: Optional library filter for the class.
             label: Optional label filter for the class.
-            configuration: Configuration parameters as keyword arguments.
+            configuration: Configuration parameters as keyword arguments, given as a
+                dict or a pydantic model whose fields are spread into the constructor.
 
         Returns:
             Configured instance of the requested class.
@@ -74,7 +77,7 @@ class Factory(BaseFactory):
         key: str,
         library: str,
         label: str,
-        configuration: dict[str, Any] | None,
+        configuration: dict[str, Any] | BaseModel | None,
     ) -> Any:
         """
         Create an instance from a filtered list of entries.
@@ -93,8 +96,4 @@ class Factory(BaseFactory):
             SweetTeaError: When no matching entry is found or multiple entries remain after filtering.
         """
         entry = cls._select_entry(entries, key, library, label)
-
-        # Return instantiated and configured class
-        if not configuration:
-            configuration = {}
-        return entry.class_def(**configuration)
+        return cls._construct(entry, configuration)
