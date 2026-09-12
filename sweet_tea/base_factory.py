@@ -19,7 +19,7 @@ import logging
 import re
 from typing import Any, Type
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from sweet_tea.entry import Entry
 from sweet_tea.registry import Registry
@@ -139,14 +139,25 @@ class BaseFactory:
         silently changing the types the class receives (see SWE-7). Every field is
         sent, including defaults, so a model default overrides the class's own.
 
+        When the class declares ``__configuration__``, the configuration is first
+        validated into that model (see :meth:`_validate_configuration`).
+
         Args:
             entry: The resolved registry entry to instantiate.
             configuration: Keyword arguments as a dict or a pydantic model; None
-                constructs with no arguments.
+                constructs with no arguments, or with the declared model's defaults.
 
         Returns:
             The constructed instance.
+
+        Raises:
+            SweetTeaError: When a declared configuration model rejects the
+                configuration, or the declaration is not a BaseModel subclass.
         """
+        schema = getattr(entry.class_def, "__configuration__", None)
+        if schema is not None:
+            configuration = cls._validate_configuration(entry, schema, configuration)
+
         if configuration is None:
             kwargs: dict[str, Any] = {}
         elif isinstance(configuration, BaseModel):
@@ -154,6 +165,61 @@ class BaseFactory:
         else:
             kwargs = configuration
         return entry.class_def(**kwargs)
+
+    @classmethod
+    def _validate_configuration(
+        cls,
+        entry: Entry,
+        schema: Any,
+        configuration: dict[str, Any] | BaseModel | None,
+    ) -> BaseModel:
+        """
+        Validate a configuration against the model its class declares (see SWE-8).
+
+        An instance of the declared model is trusted as already valid. Anything else
+        is validated into it, ``None`` included, so required fields and defaults are
+        enforced even when the caller passes no configuration. Undeclared keys follow
+        the model's own ``extra`` setting, which in pydantic defaults to ignoring them.
+
+        Args:
+            entry: The entry being instantiated, used for error messages.
+            schema: The class's ``__configuration__`` attribute.
+            configuration: The caller's configuration.
+
+        Returns:
+            An instance of the declared model.
+
+        Raises:
+            SweetTeaError: When ``schema`` is not a BaseModel subclass, or when the
+                configuration fails validation. The ValidationError is chained.
+        """
+        if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+            error_message = (
+                f"{entry.class_def.__name__}.__configuration__ must be a pydantic "
+                f"BaseModel subclass, got {schema!r}."
+            )
+            cls._logger.error(error_message)
+            raise SweetTeaError(error_message)
+
+        if isinstance(configuration, schema):
+            return configuration
+
+        if configuration is None:
+            raw: dict[str, Any] = {}
+        elif isinstance(configuration, BaseModel):
+            raw = dict(configuration)
+        else:
+            raw = configuration
+
+        try:
+            return schema.model_validate(raw)
+        except ValidationError as validation_error:
+            error_message = (
+                f"Invalid configuration for key {entry.key} "
+                f"({schema.__name__}): {validation_error}"
+            )
+            cls._logger.error(error_message)
+            raise SweetTeaError(error_message) from validation_error
 
     @classmethod
     def _select_entry(

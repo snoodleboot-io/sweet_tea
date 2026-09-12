@@ -116,6 +116,13 @@ positional-only parameters cannot be built by `Factory`; register it with
 passed as a single positional argument; to hand a class the model itself, use
 `configuration={"settings": model}`.
 
+A class may set `__configuration__` to a `BaseModel` subclass. The factory then
+validates the configuration into that model before construction — dicts, `None`,
+and other models alike; an instance of the declared model is used as is. Failure
+raises `SweetTeaError` naming the key, with the `ValidationError` as `__cause__`.
+Unknown keys are dropped unless the model sets `extra="forbid"`. A non-model
+declaration raises `SweetTeaError` on construction. `InverterFactory` ignores it.
+
 **Must not:** rely on the constructor being called with no arguments when
 `configuration` is omitted — it is called as `class_def()`, so any parameter
 without a default raises `TypeError` from your own `__init__`, not from

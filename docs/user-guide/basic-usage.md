@@ -154,3 +154,47 @@ This works with `Factory`, `AbstractFactory[T]`, and `SingletonFactory`.
 - **Extras are included.** Fields accepted through `extra="allow"` are passed along
   with declared ones.
 - **Field names, not aliases.** Keyword arguments use the model's field names.
+
+### Declaring a Configuration Model
+
+A class can declare the pydantic model its configuration must satisfy by setting
+`__configuration__`. The factory validates the configuration against it before
+constructing the class, so bad input fails at the factory boundary instead of deep
+inside `__init__`:
+
+```python
+from pydantic import BaseModel
+
+class PgSettings(BaseModel):
+    host: str
+    port: int = 5432
+
+class PgConnection:
+    __configuration__ = PgSettings
+
+    def __init__(self, host: str, port: int):
+        self.host = host
+        self.port = port
+
+conn = Factory.create("pg_connection", configuration={"host": "db", "port": "6543"})
+conn.port  # 6543 -- coerced to int
+
+Factory.create("pg_connection", configuration={"port": 1})
+# SweetTeaError: Invalid configuration for key pgconnection (PgSettings): 1 validation error for PgSettings
+# host
+#   Field required [type=missing, input_value={'port': 1}, input_type=dict]
+```
+
+It works with explicit registration and with `fill_registry`, and applies to `Factory`,
+`AbstractFactory[T]`, and `SingletonFactory`. Classes without `__configuration__` are not
+validated.
+
+- **Everything is validated, even no configuration.** A dict, `None`, or a different
+  model is validated into the declared model, so required fields are enforced and
+  defaults applied. An instance of the declared model is used as is.
+- **Errors are `SweetTeaError`.** The message names the key and the failing fields; the
+  original `ValidationError` is available as `__cause__`.
+- **Unknown keys are ignored by default.** This is pydantic's default. Set
+  `model_config = ConfigDict(extra="forbid")` on the model to reject typos.
+- **The declaration is inherited.** Subclasses use their parent's model unless they set
+  their own.
