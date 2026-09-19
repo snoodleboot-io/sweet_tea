@@ -709,6 +709,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#declaring-a-configuration-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Declaring a Configuration Model
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1303,6 +1314,46 @@ keyword-argument <code>__init__</code>:</p>
 <li><strong>Extras are included.</strong> Fields accepted through <code>extra="allow"</code> are passed along
   with declared ones.</li>
 <li><strong>Field names, not aliases.</strong> Keyword arguments use the model's field names.</li>
+</ul>
+<h3 id="declaring-a-configuration-model">Declaring a Configuration Model</h3>
+<p>A class can declare the pydantic model its configuration must satisfy by setting
+<code>__configuration__</code>. The factory validates the configuration against it before
+constructing the class, so bad input fails at the factory boundary instead of deep
+inside <code>__init__</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">PgSettings</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5432</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">PgConnection</span><span class="p">:</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">__configuration__</span> <span class="o">=</span> <span class="n">PgSettings</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">host</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">host</span> <span class="o">=</span> <span class="n">host</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">port</span> <span class="o">=</span> <span class="n">port</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="n">conn</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg_connection"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"db"</span><span class="p">,</span> <span class="s2">"port"</span><span class="p">:</span> <span class="s2">"6543"</span><span class="p">})</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="n">conn</span><span class="o">.</span><span class="n">port</span>  <span class="c1"># 6543 -- coerced to int</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg_connection"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"port"</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
+</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="c1"># SweetTeaError: Invalid configuration for key pgconnection (PgSettings): 1 validation error for PgSettings</span>
+</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a><span class="c1"># host</span>
+</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="c1">#   Field required [type=missing, input_value={'port': 1}, input_type=dict]</span>
+</span></code></pre></div>
+<p>It works with explicit registration and with <code>fill_registry</code>, and applies to <code>Factory</code>,
+<code>AbstractFactory[T]</code>, and <code>SingletonFactory</code>. Classes without <code>__configuration__</code> are not
+validated.</p>
+<ul>
+<li><strong>Everything is validated, even no configuration.</strong> A dict, <code>None</code>, or a different
+  model is validated into the declared model, so required fields are enforced and
+  defaults applied. An instance of the declared model is used as is.</li>
+<li><strong>Errors are <code>SweetTeaError</code>.</strong> The message names the key and the failing fields; the
+  original <code>ValidationError</code> is available as <code>__cause__</code>.</li>
+<li><strong>Unknown keys are ignored by default.</strong> This is pydantic's default. Set
+  <code>model_config = ConfigDict(extra="forbid")</code> on the model to reject typos.</li>
+<li><strong>The declaration is inherited.</strong> Subclasses use their parent's model unless they set
+  their own.</li>
 </ul>
 
 
