@@ -126,3 +126,31 @@ service = Factory.create("service", configuration={
     "api_key": "secret-key",
     "timeout": 60
 })
+```
+
+### Pydantic Models as Configuration
+
+`configuration` also accepts a pydantic `BaseModel`. Its fields are spread into the
+constructor exactly like a dict, so the registered class keeps an ordinary
+keyword-argument `__init__`:
+
+```python
+from pydantic import BaseModel
+
+class ServiceSettings(BaseModel):
+    api_key: str
+    timeout: int = 30
+
+service = Factory.create("service", configuration=ServiceSettings(api_key="secret-key"))
+```
+
+This works with `Factory`, `AbstractFactory[T]`, and `SingletonFactory`.
+
+- **Conversion is shallow.** The model is converted with `dict(model)`, not
+  `model_dump()`, so nested models and other objects reach your class as themselves
+  rather than as plain dicts.
+- **Every field is sent, defaults included.** A default on the model overrides the
+  default on your class's `__init__`.
+- **Extras are included.** Fields accepted through `extra="allow"` are passed along
+  with declared ones.
+- **Field names, not aliases.** Keyword arguments use the model's field names.

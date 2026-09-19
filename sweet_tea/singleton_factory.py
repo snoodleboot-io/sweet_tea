@@ -24,6 +24,8 @@ import logging
 import threading
 from typing import Any, Dict
 
+from pydantic import BaseModel
+
 from sweet_tea.base_factory import BaseFactory
 from sweet_tea.sweet_tea_error import SweetTeaError
 
@@ -61,7 +63,7 @@ class SingletonFactory(BaseFactory):
         key: str,
         library: str = "",
         label: str = "",
-        configuration: dict[str, Any] | None = None,
+        configuration: dict[str, Any] | BaseModel | None = None,
     ) -> Any:
         """
         Get an existing singleton instance or create a new one if it doesn't exist.
@@ -73,7 +75,8 @@ class SingletonFactory(BaseFactory):
             key: Name to reference the class from the registry.
             library: Optional library filter for the class.
             label: Optional label filter for the class.
-            configuration: Configuration parameters as keyword arguments.
+            configuration: Configuration parameters as keyword arguments, given as a
+                dict or a pydantic model whose fields are spread into the constructor.
 
         Returns:
             The existing singleton instance, or a newly created and registered instance.
@@ -93,7 +96,7 @@ class SingletonFactory(BaseFactory):
             if cache_key in cls.__instances:
                 return cls.__instances[cache_key]
 
-            new_instance = entry.class_def(**(configuration or {}))
+            new_instance = cls._construct(entry, configuration)
 
             # Register the new instance as a singleton
             cls.__instances[cache_key] = new_instance
