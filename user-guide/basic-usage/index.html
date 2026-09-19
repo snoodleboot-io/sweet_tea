@@ -695,6 +695,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Configuration Patterns">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pydantic-models-as-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pydantic Models as Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1253,16 +1270,40 @@
 </span></code></pre></div>
 <h2 id="configuration-patterns">Configuration Patterns</h2>
 <p>Pass configuration through the <code>configuration</code> parameter:</p>
-<p>```python
-class Service:
-    def <strong>init</strong>(self, api_key: str, timeout: int = 30):
-        self.api_key = api_key
-        self.timeout = timeout</p>
-<h1 id="configuration-as-keyword-arguments">Configuration as keyword arguments</h1>
-<p>service = Factory.create("service", configuration={
-    "api_key": "secret-key",
-    "timeout": 60
-})</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Service</span><span class="p">:</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">timeout</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span><span class="p">):</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">api_key</span> <span class="o">=</span> <span class="n">api_key</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">timeout</span> <span class="o">=</span> <span class="n">timeout</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="c1"># Configuration as keyword arguments</span>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="n">service</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"service"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="s2">"api_key"</span><span class="p">:</span> <span class="s2">"secret-key"</span><span class="p">,</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="s2">"timeout"</span><span class="p">:</span> <span class="mi">60</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="p">})</span>
+</span></code></pre></div>
+<h3 id="pydantic-models-as-configuration">Pydantic Models as Configuration</h3>
+<p><code>configuration</code> also accepts a pydantic <code>BaseModel</code>. Its fields are spread into the
+constructor exactly like a dict, so the registered class keeps an ordinary
+keyword-argument <code>__init__</code>:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseModel</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">class</span><span class="w"> </span><span class="nc">ServiceSettings</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">timeout</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="n">service</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"service"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="n">ServiceSettings</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="s2">"secret-key"</span><span class="p">))</span>
+</span></code></pre></div>
+<p>This works with <code>Factory</code>, <code>AbstractFactory[T]</code>, and <code>SingletonFactory</code>.</p>
+<ul>
+<li><strong>Conversion is shallow.</strong> The model is converted with <code>dict(model)</code>, not
+  <code>model_dump()</code>, so nested models and other objects reach your class as themselves
+  rather than as plain dicts.</li>
+<li><strong>Every field is sent, defaults included.</strong> A default on the model overrides the
+  default on your class's <code>__init__</code>.</li>
+<li><strong>Extras are included.</strong> Fields accepted through <code>extra="allow"</code> are passed along
+  with declared ones.</li>
+<li><strong>Field names, not aliases.</strong> Keyword arguments use the model's field names.</li>
+</ul>
 
 
 
