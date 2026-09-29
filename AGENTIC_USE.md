@@ -147,6 +147,15 @@ needs a class from it. A resolved module matches eager registration exactly.
 `Factory.create` or reads `Registry.entries()` from a module body fails under lazy
 filling; name those modules in `eager=[...]`, or defer the lookup.
 
+`Registry.entries()` includes unresolved entries, whose `class_def` is `None` and
+whose `module`/`attribute` name the target. Read a class through a factory, or call
+`Registry.resolve_all()` first; `entry.is_lazy` distinguishes them.
+
+`Registry.lazy_audit(path=..., module=...)` reports what in a tree would not survive
+lazy filling, and `fill_registry(lazy=True, eager="auto")` acts on that report. The
+audit sees module-level statements and one hop into functions they call, so an
+import-time lookup buried deeper is caught at runtime instead.
+
 Classes created at runtime (`globals()[name] = type(...)`) cannot be seen in source.
 Requesting one imports every module still pending and warns; `lazy="strict"` raises
 instead. `eager` without `lazy` raises `SweetTeaError`.

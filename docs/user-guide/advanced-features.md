@@ -209,6 +209,27 @@ vanish on resolution, and runtime-injected names are missing until something ask
 `Registry.resolve_all()` when you need an exact registry — it imports everything, which
 is by definition eager.
 
+### Reading the registry directly
+
+`Registry.entries()` returns unresolved entries too, and an unresolved entry has
+`class_def is None` — it carries `module` and `attribute` instead. Code that reads
+`entry.class_def` straight off `entries()` therefore sees `None` where it used to see a
+class:
+
+```python
+# breaks under lazy filling: class_def may be None
+matches = [e.class_def for e in Registry.entries() if e.key == name]
+
+# resolves properly
+klass = InverterFactory.create(name)
+
+# or, when you genuinely want the whole registry materialised
+Registry.resolve_all()
+```
+
+Going through a factory always resolves first, so factory callers never see `None`.
+Use `entry.is_lazy` to tell the two apart when walking entries yourself.
+
 ### Adopting it
 
 Lazy filling assumes nothing needs the registry to be complete *while modules are still

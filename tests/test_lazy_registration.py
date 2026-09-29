@@ -292,6 +292,47 @@ class TestLazyImportFailures(TestCase):
         self.assertIn("AssertionError", str(raised.exception))
 
 
+class TestLazyEntryIntrospection(TestCase):
+    """What direct readers of Registry.entries() see while entries are unresolved."""
+
+    def setUp(self):
+        reset_registry()
+        forget_case_modules()
+
+    def tearDown(self):
+        reset_registry()
+
+    def test_unresolved_entries_expose_no_class(self):
+        """Documented contract: class_def is None until the module is imported.
+
+        Code that reads entry.class_def straight off entries() — rather than going
+        through a factory — sees None for an unresolved entry instead of a class.
+        """
+        fill(lazy=True)
+        unresolved = [entry for entry in Registry.entries() if entry.is_lazy]
+
+        self.assertTrue(unresolved)
+        self.assertIsNone(unresolved[0].class_def)
+        self.assertTrue(unresolved[0].module)
+        self.assertTrue(unresolved[0].attribute)
+
+    def test_resolve_all_gives_every_entry_a_class(self):
+        """The escape hatch for introspection: resolve first, then read."""
+        fill(lazy=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SweetTeaWarning)
+            Registry.resolve_all()
+
+        self.assertTrue(
+            all(entry.class_def is not None for entry in Registry.entries())
+        )
+
+    def test_factories_never_hand_back_an_unresolved_class(self):
+        """Going through a factory resolves, so callers see a class or an error."""
+        fill(lazy=True)
+        self.assertIsNotNone(InverterFactory.create("plain"))
+
+
 class TestLazyTypedCacheInvalidation(TestCase):
     """Resolution removes entries, which the type-lookup cache must notice."""
 
