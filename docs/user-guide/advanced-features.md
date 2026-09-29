@@ -150,3 +150,69 @@ cache_factory = AbstractFactory[CacheInterface]
 
 app = Application(db_factory, cache_factory)
 ```
+
+## Lazy Registration
+
+`fill_registry` imports every module in the tree to find the classes in it. With
+`lazy=True` it reads the names out of the source instead, and imports a module only
+when a factory first needs a class from it:
+
+```python
+Registry.fill_registry(lazy=True)
+
+Factory.create("database_connection")   # imports just that module
+```
+
+Measured on a 880-module package: filling drops from 1,165 ms, 46 MB and 1,600 imported
+modules to 552 ms, 4.3 MB and none. The saving is whatever you never ask for — and it
+persists for the life of the process, unlike the one-off startup cost.
+
+### What it costs
+
+Creation is not faster. The import still happens, just later and only if needed, so the
+first `create()` for a module pays what the fill used to. For a package of small
+pure-Python modules with warm `.pyc` files, parsing can even cost *more* than importing
+would have; the win there is memory and unexecuted code, not wall clock.
+
+### Names it cannot see
+
+Registration keys off the module attribute a class is bound to, so ordinary classes,
+aliases, `type()` calls, `namedtuple`, `Enum` and `create_model` results are all found
+by reading the source. Classes injected at runtime — `globals()[name] = type(...)`,
+`setattr(module, ...)` — leave no trace to read. Asking for one of those triggers a
+fallback sweep that imports everything still pending and warns:
+
+```
+SweetTeaWarning: Importing 43 remaining module(s) to look for loopa: no lazily
+registered name matched. Add the defining module to fill_registry(eager=[...]).
+```
+
+Name those modules up front and the sweep never happens:
+
+```python
+Registry.fill_registry(lazy=True, eager=["myapp.plugins.*"])
+```
+
+`eager` patterns match the same way `exclude` patterns do, and `exclude` still wins.
+Passing `eager` without `lazy` is an error rather than a no-op.
+
+Use `lazy="strict"` to refuse the sweep outright — a name no scan could see then raises,
+naming the `eager` pattern that would fix it, instead of quietly importing the tree.
+
+### Accuracy
+
+Once a module is imported, its entries are rebuilt by the same discovery an eager fill
+uses, so a resolved module matches eager registration exactly. Before that, the view is
+approximate in both directions: a class replaced by a decorator, a `TYPE_CHECKING`-only
+class, or a class behind an uninstalled dependency may appear in `list_keys()` and
+vanish on resolution, and runtime-injected names are missing until something asks. Call
+`Registry.resolve_all()` when you need an exact registry — it imports everything, which
+is by definition eager.
+
+### Adopting it
+
+Lazy filling assumes nothing needs the registry to be complete *while modules are still
+importing*. A package that resolves classes through the registry at import time — in a
+module body, or in a function a module body calls — will fail under `lazy=True`, because
+the entries it wants have not been resolved yet. Put such modules in `eager=[...]`, or
+defer their lookups to first use.

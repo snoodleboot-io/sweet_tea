@@ -31,8 +31,12 @@ class Entry(BaseModel):
         examples=["myclass", "databaseconnection"],
     )
 
-    class_def: type = Field(
-        description="The actual class type that can be instantiated"
+    class_def: type | None = Field(
+        default=None,
+        description=(
+            "The actual class type that can be instantiated, or None while the entry "
+            "is registered lazily and its module has not been imported yet"
+        ),
     )
 
     library: str = Field(
@@ -46,3 +50,37 @@ class Entry(BaseModel):
         description="Optional label for categorizing classes (e.g., by environment or feature set)",
         examples=["production", "testing", "v2"],
     )
+
+    module: str = Field(
+        default="",
+        description="Dotted module path holding the class, set only for lazy entries",
+        examples=["mypkg.services.database"],
+    )
+
+    attribute: str = Field(
+        default="",
+        description="Module attribute the class is bound to, set only for lazy entries",
+        examples=["DatabaseConnection"],
+    )
+
+    @property
+    def is_lazy(self) -> bool:
+        """Whether this entry still needs its module imported before use."""
+        return self.class_def is None
+
+    @property
+    def identity(self) -> tuple[str, object, str, str]:
+        """
+        The four values that decide whether two registrations are duplicates.
+
+        Mirrors what ``Entry.__eq__`` compares for eager entries. A lazy entry has no
+        class object yet, so it identifies its target by ``module:attribute`` instead
+        — which also means a lazy and an eager registration of one class do not
+        collapse into a single entry (see SWE-10).
+        """
+        target: object = (
+            self.class_def
+            if self.class_def is not None
+            else f"{self.module}:{self.attribute}"
+        )
+        return (self.key, target, self.library, self.label)

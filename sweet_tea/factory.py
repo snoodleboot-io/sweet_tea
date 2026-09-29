@@ -58,17 +58,9 @@ class Factory(BaseFactory):
         Raises:
             SweetTeaError: When the key is not found or filters don't match.
         """
-        # Find all entries that have the specified key value (try multiple variations)
-        entries = []
-        key_variations = cls._generate_key_variations(key)
-        for variation in key_variations:
-            entries.extend(
-                [entry for entry in cls._registry.entries() if entry.key == variation]
-            )
-            if entries:  # Found entries with this variation
-                break
-
-        return cls._create_from_entries(entries, key, library, label, configuration)
+        return cls._create_from_entries(
+            cls._find_entries(key), key, library, label, configuration
+        )
 
     @classmethod
     def _create_from_entries(

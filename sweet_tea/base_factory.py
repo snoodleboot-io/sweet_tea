@@ -96,6 +96,49 @@ class BaseFactory:
         return variations
 
     @classmethod
+    def _resolve_for(cls, key: str) -> list[str]:
+        """
+        Import whatever a lookup of this key needs, and return the spellings to try.
+
+        A no-op for an eagerly filled registry. For a lazily filled one this is where
+        the deferred import happens — only for modules holding a candidate for this
+        key (see SWE-10).
+
+        Args:
+            key: The requested key, in any supported spelling.
+
+        Returns:
+            The key variations to match against, in order of preference.
+        """
+        variations = cls._generate_key_variations(key)
+        cls._registry.ensure_resolved(variations)
+        return variations
+
+    @classmethod
+    def _class_of(cls, entry: Entry) -> type:
+        """
+        Get an entry's class, insisting that it has been resolved.
+
+        Args:
+            entry: The entry to read.
+
+        Returns:
+            The registered class.
+
+        Raises:
+            SweetTeaError: When the entry is still lazy, which means a resolution step
+                was skipped rather than that anything is wrong with the registration.
+        """
+        if entry.class_def is None:
+            error_message = (
+                f"The entry for {entry.key} is registered lazily and its module "
+                f"{entry.module} has not been imported."
+            )
+            cls._logger.error(error_message)
+            raise SweetTeaError(error_message)
+        return entry.class_def
+
+    @classmethod
     def _find_entries(
         cls, key: str, candidates: list[Entry] | None = None
     ) -> list[Entry]:
@@ -113,9 +156,16 @@ class BaseFactory:
         Returns:
             Matching entries, or an empty list when no variation matches.
         """
+        variations = (
+            cls._resolve_for(key)
+            if candidates is None
+            # A caller that pre-filtered has already resolved; resolving again here
+            # would be a second pass over the registry for nothing.
+            else cls._generate_key_variations(key)
+        )
         pool = cls._registry.entries() if candidates is None else candidates
 
-        for variation in cls._generate_key_variations(key):
+        for variation in variations:
             matched = [entry for entry in pool if entry.key == variation]
             if matched:
                 return matched
@@ -154,7 +204,7 @@ class BaseFactory:
             SweetTeaError: When a declared configuration model rejects the
                 configuration, or the declaration is not a BaseModel subclass.
         """
-        schema = getattr(entry.class_def, "__configuration__", None)
+        schema = getattr(cls._class_of(entry), "__configuration__", None)
         if schema is not None:
             configuration = cls._validate_configuration(entry, schema, configuration)
 
@@ -164,7 +214,7 @@ class BaseFactory:
             kwargs = dict(configuration)
         else:
             kwargs = configuration
-        return entry.class_def(**kwargs)
+        return cls._class_of(entry)(**kwargs)
 
     @classmethod
     def _validate_configuration(
@@ -195,7 +245,7 @@ class BaseFactory:
         """
         if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
             error_message = (
-                f"{entry.class_def.__name__}.__configuration__ must be a pydantic "
+                f"{cls._class_of(entry).__name__}.__configuration__ must be a pydantic "
                 f"BaseModel subclass, got {schema!r}."
             )
             cls._logger.error(error_message)
