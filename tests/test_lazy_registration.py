@@ -448,3 +448,148 @@ class TestLazyTypedCacheInvalidation(TestCase):
 
         self.assertTrue(typed <= registered, f"stale keys: {typed - registered}")
         self.assertIn("dog", typed)
+
+
+class TestExplicitLazyEntriesSurviveResolution(TestCase):
+    """register_lazy is public API, so resolution must not destroy what it made (SWE-17)."""
+
+    PLAIN_MODULE = f"{CASES_MODULE}.c01_plain"
+
+    def setUp(self):
+        reset_registry()
+        forget_case_modules()
+
+    def tearDown(self):
+        reset_registry()
+
+    def imported_cases(self) -> set[str]:
+        return {n for n in sys.modules if n.startswith(CASES_MODULE + ".")}
+
+    def register_alias(self) -> None:
+        """Register the alias from the ticket: a key discovery cannot reproduce."""
+        Registry.register_lazy(
+            key="my_alias",
+            module=self.PLAIN_MODULE,
+            attribute="Plain",
+            library="mylib",
+            label="alias",
+        )
+
+    def test_alias_survives_the_resolution_it_triggered(self):
+        """A custom key must not be dropped by the reconcile its own lookup caused."""
+        self.register_alias()
+        Registry.ensure_resolved(["my_alias"])
+
+        entry = next(e for e in Registry.entries() if e.key == "my_alias")
+        self.assertEqual(entry.library, "mylib")
+        self.assertEqual(entry.label, "alias")
+        self.assertEqual(entry.class_object.__name__, "Plain")
+
+    def test_alias_and_discovered_name_are_both_registered(self):
+        """Two keys for one class: the alias joins discovery's entry, it does not replace it."""
+        self.register_alias()
+        Registry.ensure_resolved(["my_alias"])
+
+        keys = keys_now()
+        self.assertIn("my_alias", keys)
+        self.assertIn("plain", keys)
+        classes = {
+            entry.key: entry.class_object
+            for entry in Registry.entries()
+            if entry.key in {"my_alias", "plain"}
+        }
+        self.assertIs(classes["my_alias"], classes["plain"])
+
+    def test_recategorised_registration_survives(self):
+        """Reproducibility is judged on (key, library, label), not on the key alone."""
+        fill(lazy=True)
+        Registry.register_lazy(
+            key="plain",
+            module=self.PLAIN_MODULE,
+            attribute="Plain",
+            library="otherlib",
+        )
+
+        Registry.ensure_resolved(["plain"])
+
+        libraries = {
+            entry.library for entry in Registry.entries() if entry.key == "plain"
+        }
+        self.assertEqual(libraries, {CASES_MODULE, "otherlib"})
+
+    def test_factory_creates_through_the_alias(self):
+        """The lookup that forces the import must be answered with the class."""
+        fill(lazy=True)
+        self.register_alias()
+
+        self.assertEqual(Factory.create("my_alias").__class__.__name__, "Plain")
+
+    def test_no_sweep_for_an_explicitly_registered_key(self):
+        """The expensive symptom: a surviving alias must not escalate to a tree sweep."""
+        fill(lazy=True)
+        self.register_alias()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", SweetTeaWarning)
+            Factory.create("my_alias")
+
+        self.assertEqual(
+            [str(w.message) for w in caught if "remaining module" in str(w.message)],
+            [],
+            "an explicit registration should resolve its own module and stop there",
+        )
+        self.assertEqual(self.imported_cases(), {self.PLAIN_MODULE})
+
+    def test_strict_does_not_raise_for_an_explicitly_registered_key(self):
+        """lazy="strict" refuses sweeps, and an alias must no longer need one."""
+        fill(lazy="strict")
+        self.register_alias()
+
+        self.assertEqual(Factory.create("my_alias").__class__.__name__, "Plain")
+
+    def test_entry_whose_attribute_is_not_a_class_is_dropped(self):
+        """Carrying entries forward must not keep a name that resolves to a value."""
+        Registry.register_lazy(
+            key="my_value",
+            module=f"{CASES_MODULE}.c12_mutated",
+            attribute="Shadowed",
+            library="mylib",
+        )
+
+        Registry.ensure_resolved(["my_value"], sweep=False)
+
+        self.assertNotIn("my_value", keys_now())
+
+    def test_entry_whose_attribute_vanished_is_dropped(self):
+        """A registration naming an attribute the module does not bind has nothing to keep."""
+        Registry.register_lazy(
+            key="my_missing",
+            module=self.PLAIN_MODULE,
+            attribute="NotThere",
+            library="mylib",
+        )
+
+        Registry.ensure_resolved(["my_missing"], sweep=False)
+
+        self.assertNotIn("my_missing", keys_now())
+
+    def test_provisional_scanned_name_still_disappears(self):
+        """SWE-10's parity rests on this: the fix must not resurrect a bad guess."""
+        fill(lazy=True)
+        self.assertIn("nolongerclass", keys_now())
+
+        Registry.ensure_resolved(["nolongerclass"], sweep=False)
+
+        self.assertNotIn("nolongerclass", keys_now())
+
+    def test_carrying_an_entry_forward_is_idempotent(self):
+        """Resolving twice must not leave two entries for one alias."""
+        fill(lazy=True)
+        self.register_alias()
+        Registry.ensure_resolved(["my_alias"])
+        count = len(Registry.entries())
+
+        Registry.ensure_resolved(["my_alias"], sweep=False)
+
+        self.assertEqual(len(Registry.entries()), count)
+        self.assertEqual(len([e for e in Registry.entries() if e.key == "my_alias"]), 1)

@@ -23,6 +23,7 @@ import traceback
 import warnings
 from collections.abc import Iterable
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from sweet_tea.audit_finding import AuditFinding
@@ -202,8 +203,18 @@ class Registry:
         Register a class by name, deferring its module's import until first use.
 
         The entry carries no class object. The module is imported, and the entry
-        replaced with whatever eager registration would have produced, the first time
-        a factory needs this key (see :meth:`ensure_resolved`).
+        resolved to the class it names, the first time a factory needs this key (see
+        :meth:`ensure_resolved`). Resolving the module also registers everything else
+        eager discovery finds in it, so a key this registration happens to share with
+        a discovered class ends up with one entry rather than two.
+
+        The key, library and label are kept as given. Resolution carries an entry
+        discovery would not reproduce — an alias, or a registration categorised
+        differently from the module it lives in — forward onto the resolved class
+        rather than replacing it with what discovery found (SWE-17), so an alias
+        survives first use. The one way such an entry disappears is the honest one:
+        the module no longer binds a class under ``attribute``, in which case nothing
+        was there to register.
 
         Args:
             key: Name used to reference the class for instantiation.
@@ -518,6 +529,14 @@ class Registry:
         could predict, and minus provisional guesses that turned out not to be
         classes.
 
+        Discovery alone is not the whole answer, because not every lazy entry came
+        from a scan. ``register_lazy`` is public, and a caller using it to register an
+        alias — its own key, library or label, pointing at one attribute — asks for
+        something discovery cannot reproduce by construction. Rebuilding from
+        discovery only would therefore destroy the registration that triggered the
+        import (SWE-17), so entries discovery will not reproduce are carried forward
+        by :meth:`__carry_forward_lazy_entries` instead of being dropped.
+
         A module whose import raises is reported and its lazy entries dropped, the
         way the eager fill reports and skips it (see :meth:`__skip_module`), so the
         lookup that triggered this sees the same registry an eager fill would have
@@ -555,6 +574,13 @@ class Registry:
                 if class_def.__module__ == module_name
                 or cls.__is_orphaned(class_def, module_name)
             ]
+            # Inside the try for the same reason ``found`` is: this reads attributes
+            # off the freshly imported module, which runs the module's code, and a
+            # module that blows up part-way through must be skipped whole rather than
+            # half-registered.
+            carried = cls.__carry_forward_lazy_entries(
+                module, module_name, found, library, label
+            )
         except Exception as error:
             # Same contract as the eager path, whatever was raised: the module is
             # reported and its entries removed rather than the lookup failing
@@ -581,6 +607,93 @@ class Registry:
                 label=label,
                 attribute=class_name,
             )
+
+        # After discovery, not before: an explicit registration for a class discovery
+        # also registers must end up alongside that entry, and registering in this
+        # order keeps the discovered keys where they have always been in __registry.
+        for entry, class_def in carried:
+            cls.register(
+                key=entry.key,
+                class_def=class_def,
+                library=entry.library,
+                label=entry.label,
+                attribute=entry.attribute,
+            )
+
+    @classmethod
+    def __carry_forward_lazy_entries(
+        cls,
+        module: ModuleType,
+        module_name: str,
+        found: list[tuple[str, type]],
+        library: str,
+        label: str,
+    ) -> list[tuple[Entry, type]]:
+        """
+        Resolve the lazy entries for a module that discovery will not re-register.
+
+        Reconciliation replaces a module's lazy entries with what discovery finds.
+        That is right for an entry the *scanner* contributed — it was a reading of the
+        source, and the import is the authority that corrects it — but wrong for one a
+        caller contributed through ``register_lazy``, which is a statement of intent
+        that no amount of discovery can rediscover. Discovery keys every class on
+        ``class_name.lower()`` under the module's own library and label, so an alias
+        (``key="my_alias"``), a differently categorised registration (``library=``,
+        ``label=``) or any other deliberate spelling is exactly what reconciliation
+        used to destroy, at the lookup that first needed it (SWE-17). Worse than
+        losing the entry: with other modules still pending, the miss escalated to the
+        fallback sweep, so the caller paid every import in the tree and still did not
+        get its class.
+
+        An entry is carried forward only when discovery will not produce its
+        ``(key, library, label)`` — anything discovery does produce is about to be
+        registered from the live class anyway, and re-adding it here would be a second
+        registration of the same name.
+
+        A carried entry is kept only if its attribute is a class *now*. That is what
+        preserves the parity the scan depends on: a provisional guess that turned out
+        to be a function, a value, or nothing at all still disappears on resolution,
+        so the post-resolution registry still matches an eager fill exactly (SWE-10).
+        The test is deliberately only "is it a class", without discovery's
+        ``__module__`` filter. That filter exists to stop discovery registering an
+        imported class again under every module that imports it; an explicit
+        ``register_lazy`` has already named the module and the attribute, so a
+        registration pointed at a re-export is a legitimate request rather than an
+        accident of iteration. The trade-off is that a *scanned* binding whose class
+        claims a foreign ``__module__`` — ``create_model(..., __module__="other")``
+        and little else — now survives resolution where an eager fill would not have
+        registered it. Keeping an explicitly requested alias is worth more than
+        matching the eager fill on a name the scanner had to guess at anyway.
+
+        The caller must hold ``__lock``, and must call this before
+        :meth:`__drop_lazy_entries` removes the entries being read.
+
+        Args:
+            module: The freshly imported module.
+            module_name: Dotted path of that module.
+            found: Discovery's ``(attribute name, class)`` pairs for it.
+            library: Library the module's lazy entries were filled under.
+            label: Label the module's lazy entries were filled under.
+
+        Returns:
+            ``(entry, class)`` pairs to re-register, in registry order.
+        """
+        # register() lowercases key, library and label, and the pending index stores
+        # the pair already lowercased, so these triples compare like with like.
+        reproduced = {(class_name.lower(), library, label) for class_name, _ in found}
+
+        carried: list[tuple[Entry, type]] = []
+        for entry in cls.__registry:
+            if not (entry.is_lazy and entry.module == module_name):
+                continue
+            if (entry.key, entry.library, entry.label) in reproduced:
+                continue
+
+            resolved = getattr(module, entry.attribute, None)
+            if isinstance(resolved, type):
+                carried.append((entry, resolved))
+
+        return carried
 
     @classmethod
     def __drop_lazy_entries(cls, module_name: str) -> None:

@@ -272,12 +272,38 @@ naming the `eager` pattern that would fix it, instead of quietly importing the t
 ### Accuracy
 
 Once a module is imported, its entries are rebuilt by the same discovery an eager fill
-uses, so a resolved module matches eager registration exactly. Before that, the view is
+uses, so a resolved module matches eager registration exactly — plus anything registered
+by hand with `register_lazy`, which is carried forward rather than rebuilt (see
+[Registering one class lazily](#registering-one-class-lazily)). Before that, the view is
 approximate in both directions: a class replaced by a decorator, a `TYPE_CHECKING`-only
 class, or a class behind an uninstalled dependency may appear in `list_keys()` and
 vanish on resolution, and runtime-injected names are missing until something asks. Call
 `Registry.resolve_all()` when you need an exact registry — it imports everything, which
 is by definition eager.
+
+### Registering one class lazily
+
+`Registry.register_lazy(key, module, attribute, library="", label="")` adds a single
+deferred entry, without a scan or a tree walk. Use it to register a class you already
+know the location of — most usefully under a key of your own:
+
+```python
+Registry.register_lazy(
+    key="pattern_alias",
+    module="myapp.patterns.retry",
+    attribute="RetryPattern",
+    library="mylib",
+    label="alias",
+)
+
+Factory.create("pattern_alias")     # imports myapp.patterns.retry, and nothing else
+```
+
+The key, library and label are kept exactly as given. Resolving the module registers
+everything discovery finds in it as well, so an alias and the class's own discovered key
+both end up registered — two keys, one class. An entry whose `attribute` the module turns
+out not to bind to a class is dropped on resolution, which is the same rule a scanned
+name is held to.
 
 ### Reading the registry directly
 
