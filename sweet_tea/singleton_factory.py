@@ -22,12 +22,14 @@ registered instance.
 
 import logging
 import threading
+import warnings
 from typing import Any, Dict
 
 from pydantic import BaseModel
 
 from sweet_tea.base_factory import BaseFactory
 from sweet_tea.sweet_tea_error import SweetTeaError
+from sweet_tea.sweet_tea_warning import SweetTeaWarning
 
 
 class SingletonFactory(BaseFactory):
@@ -53,6 +55,11 @@ class SingletonFactory(BaseFactory):
     # caller's spelling is what makes the singleton guarantee hold — every spelling
     # of one key resolves to the same entry and therefore the same slot (see SWE-5).
     __instances: Dict[tuple[str, str, str], Any] = {}
+
+    # The configuration each cached instance was built from, under the same key. Kept
+    # so a later call passing a different one can be told that it had no effect (see
+    # SWE-14); the instance itself is never rebuilt.
+    __configurations: Dict[tuple[str, str, str], dict[str, Any] | None] = {}
 
     # Logger instance
     _logger = logging.getLogger(__name__)
@@ -94,15 +101,88 @@ class SingletonFactory(BaseFactory):
 
             # Return existing instance if available
             if cache_key in cls.__instances:
+                cls.__warn_on_configuration_drift(cache_key, configuration)
                 return cls.__instances[cache_key]
 
             new_instance = cls._construct(entry, configuration)
 
             # Register the new instance as a singleton
             cls.__instances[cache_key] = new_instance
+            cls.__configurations[cache_key] = cls.__comparable(configuration)
             cls._logger.info(f"Created and registered singleton instance: {entry.key}")
 
             return new_instance
+
+    @classmethod
+    def __comparable(
+        cls, configuration: dict[str, Any] | BaseModel | None
+    ) -> dict[str, Any] | None:
+        """
+        Reduce a configuration to the form drift is judged on.
+
+        Taken from what the caller passed, before any schema a class declares is
+        applied, so a model and an equivalent dict compare equal — which is the answer
+        a caller would expect, since they build the same instance.
+
+        Args:
+            configuration: The configuration as given.
+
+        Returns:
+            A dict of the fields, or None when nothing was passed.
+        """
+        if configuration is None:
+            return None
+        if isinstance(configuration, BaseModel):
+            return dict(configuration)
+        return dict(configuration)
+
+    @classmethod
+    def __warn_on_configuration_drift(
+        cls,
+        cache_key: tuple[str, str, str],
+        configuration: dict[str, Any] | BaseModel | None,
+    ) -> None:
+        """
+        Report a configuration that arrived too late to take effect.
+
+        A cached singleton is never rebuilt — other holders rely on the identity — so a
+        configuration passed to a later call is discarded. That is the right behaviour
+        and the wrong silence: a caller who believes they configured something gets an
+        instance configured by whoever called first (see SWE-14).
+
+        Nothing is said when the caller passed no configuration, since that is the
+        ordinary way to fetch an existing singleton.
+
+        Args:
+            cache_key: Identity of the cached entry.
+            configuration: What this call passed.
+        """
+        if configuration is None:
+            return
+
+        requested = cls.__comparable(configuration)
+        existing = cls.__configurations.get(cache_key)
+
+        try:
+            unchanged = bool(requested == existing)
+        except Exception:
+            # Values whose comparison is not boolean — a numpy array, say — make drift
+            # undecidable. A warning on every call would be worse than none.
+            return
+
+        if unchanged:
+            return
+
+        warnings.warn(
+            f"Ignoring the configuration passed for singleton {cache_key[0]!r}: an "
+            f"instance is already cached and is not rebuilt, so the configuration from "
+            f"the first call still applies. Use Factory for per-call configuration, or "
+            f"SingletonFactory.pop to discard the cached instance first.",
+            SweetTeaWarning,
+            # 1 is this helper, 2 is create, 3 is the caller whose configuration was
+            # dropped — which is the line worth pointing at.
+            stacklevel=3,
+        )
 
     @classmethod
     def clear(cls) -> None:
@@ -114,6 +194,7 @@ class SingletonFactory(BaseFactory):
         with cls.__lock:
             count = len(cls.__instances)
             cls.__instances.clear()
+            cls.__configurations.clear()
             cls._logger.info(f"Cleared {count} singleton instances")
 
     @classmethod
@@ -154,6 +235,7 @@ class SingletonFactory(BaseFactory):
                 )
 
             instance = cls.__instances.pop(cache_key)
+            cls.__configurations.pop(cache_key, None)
 
             # Python's garbage collector will handle destruction automatically
             # when all references are removed

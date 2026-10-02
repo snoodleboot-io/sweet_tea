@@ -297,8 +297,12 @@ the exact variation matches first. When a returned object surprises you, check
   filters — `pop(key="Conn", library="redis")` — and popping without them cannot
   reach an entry that needed a filter to resolve.
 - **The first call's `configuration` wins**: later calls return the cached
-  instance and ignore their `configuration` argument entirely. No error marks
-  the discarded config.
+  instance and ignore their `configuration` argument entirely. The instance is
+  never rebuilt, since other holders rely on its identity. Passing a
+  configuration that differs from the one it was built with raises a
+  `SweetTeaWarning` naming the key; passing none, the ordinary way to fetch an
+  existing singleton, is silent. Use `Factory` for per-call configuration, or
+  `SingletonFactory.pop` to discard the instance first.
 
 ---
 
