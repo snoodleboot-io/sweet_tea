@@ -245,3 +245,71 @@ importing*. A package that resolves classes through the registry at import time 
 module body, or in a function a module body calls — will fail under `lazy=True`, because
 the entries it wants have not been resolved yet. Put such modules in `eager=[...]`, or
 defer their lookups to first use.
+
+## Snapshotting the Registry
+
+Filling a registry walks a package tree. Lazy filling skips the imports but still reads
+every source file. A snapshot skips both — write the filled registry once, read it back
+as data:
+
+```python
+Registry.fill_registry(lazy=True)
+Registry.export("registry.json")      # build step
+
+Registry.load("registry.json")        # every run after
+Factory.create("database_connection")
+```
+
+Measured on an 880-module package, all producing the same 799 entries:
+
+| | time |
+| -- | -- |
+| `fill_registry(lazy=True)` | 497 ms |
+| `load("registry.json")` | **49 ms** |
+| `load("registry.json", verify=False)` | **8 ms** |
+
+Loaded entries are lazy entries, so nothing is imported until a factory — or a read of
+`entry.class_def` — needs it.
+
+### Staleness
+
+A stale snapshot is worse than walking the tree: it registers names that no longer
+exist, and the failure surfaces far from the cause. So a snapshot records the trees it
+was built from with a digest over their Python sources, and `load` checks it by default.
+A changed, added or removed module, or a tree that has moved, raises `SweetTeaError`
+naming the source and telling you to rebuild.
+
+Verification costs a hash of every source file — 41 ms of the 49 ms above. Pass
+`verify=False` where something else already guarantees the snapshot is current, such as
+a build that regenerates it.
+
+The digest covers excluded modules too. A snapshot cannot know which `exclude` patterns
+a later fill would pass, so it is deliberately conservative: editing a file that was
+never registered still marks the snapshot stale. `__pycache__` is ignored, since
+bytecode is derived.
+
+### What a snapshot records
+
+```json
+{
+  "version": 1,
+  "sources": [{"module": "myapp", "path": "/srv/myapp", "digest": "..."}],
+  "entries": [{"key": "database_connection", "class_def": "myapp.db:DatabaseConnection",
+               "library": "myapp", "label": ""}],
+  "skipped": {"myapp.optional_backend": "missing optional dependency"}
+}
+```
+
+`class_def` is `module:attribute` — the attribute the class is *bound to*, which is how
+the registry keys it and is not always the class's own `__name__`.
+
+Skips are recorded on purpose. Filling warns and skips a module whose import fails
+because an optional dependency is missing; a snapshot that dropped that would bake in
+the install profile of the machine that built it, and a reader could not tell "not
+registered" from "not installed". `Registry.skipped()` reports them either way.
+
+### Determinism
+
+Because a snapshot is read rather than discovered, its contents do not depend on what
+happens to be imported when it is read. Registry membership from a live fill can vary
+with interpreter state; a loaded registry cannot.

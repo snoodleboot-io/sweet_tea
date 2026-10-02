@@ -162,6 +162,20 @@ Classes created at runtime (`globals()[name] = type(...)`) cannot be seen in sou
 Requesting one imports every module still pending and warns; `lazy="strict"` raises
 instead. `eager` without `lazy` raises `SweetTeaError`.
 
+### Snapshotting
+
+**Contract:** `Registry.export(path)` writes the filled registry as JSON;
+`Registry.load(path)` registers it back without walking or importing a tree. Loaded
+entries are lazy. On an 880-module package: fill 497 ms, load 49 ms, load with
+`verify=False` 8 ms.
+
+**Must not:** load a snapshot built from different source. `load` verifies a digest of
+the recorded trees by default and raises `SweetTeaError` when they differ; only pass
+`verify=False` when something else guarantees freshness.
+
+`Registry.skipped()` reports modules whose optional dependency was missing — a snapshot
+carries those, so "not registered" stays distinguishable from "not installed".
+
 ### Type-constrained factory
 
 **Contract:** subscript with the base class the results must inherit from:

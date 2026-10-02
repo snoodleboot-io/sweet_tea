@@ -29,6 +29,9 @@ from sweet_tea.audit_finding import AuditFinding
 from sweet_tea.entry import Entry, set_resolver
 from sweet_tea.lazy_audit import LazyAudit
 from sweet_tea.lazy_scanner import LazyScanner
+from sweet_tea.registry_snapshot import RegistrySnapshot
+from sweet_tea.snapshot_entry import SnapshotEntry
+from sweet_tea.snapshot_source import SnapshotSource
 from sweet_tea.sweet_tea_error import SweetTeaError
 from sweet_tea.sweet_tea_warning import SweetTeaWarning
 
@@ -73,6 +76,18 @@ class Registry:
     # Set when any subtree was filled with lazy="strict": a key that no static scan
     # could see then raises instead of triggering a whole-tree sweep.
     __no_sweep: bool = False
+
+    # Trees that have been filled, mapped to the directory walked. Only the outermost
+    # call of each fill is recorded, so a snapshot names the roots a consumer asked
+    # for rather than every subpackage underneath them.
+    __fills: dict[str, str] = {}
+
+    # Nesting depth of fill_registry, which recurses into subpackages.
+    __fill_depth: int = 0
+
+    # Modules that were not registered, mapped to why. Exported alongside the entries
+    # so a snapshot's reader can tell "not registered" from "not installed".
+    __skipped: dict[str, str] = {}
 
     __lookup: dict[Any, list[Entry]] = {}
 
@@ -121,7 +136,12 @@ class Registry:
 
     @classmethod
     def register(
-        cls, key: str, class_def: type, library: str = "", label: str = ""
+        cls,
+        key: str,
+        class_def: type,
+        library: str = "",
+        label: str = "",
+        attribute: str = "",
     ) -> None:
         """
         Register a class with the registry.
@@ -131,10 +151,16 @@ class Registry:
             class_def: The class type to register.
             library: Name of the library the class belongs to.
             label: Optional label for categorizing classes (e.g., for different environments).
+            attribute: Module attribute the class is bound to, when known. Discovery
+                passes it so a snapshot can name the class the way it was found —
+                ``Mismatch = type("InnerName", ...)`` is reachable as ``Mismatch`` and
+                not as its ``__name__``. Omitted, export falls back to ``__qualname__``.
         """
         new_entry = Entry(
             key=key.lower(),
             class_def=class_def,
+            module=getattr(class_def, "__module__", ""),
+            attribute=attribute,
             library=library.lower(),
             label=label.lower(),
         )
@@ -276,6 +302,130 @@ class Registry:
             cls.resolve_all()
 
     @classmethod
+    def skipped(cls) -> dict[str, str]:
+        """
+        Modules that were not registered, mapped to why.
+
+        Filling warns and skips a module whose import fails on a missing optional
+        dependency. Without this, a caller cannot tell a class that was never written
+        from one whose dependency is not installed.
+
+        Returns:
+            Copy of the skip record.
+        """
+        with cls.__lock:
+            return dict(cls.__skipped)
+
+    @classmethod
+    def export(cls, path: str) -> None:
+        """
+        Write the filled registry to a file, so it can be read back without a walk.
+
+        Nothing is imported: an unresolved entry is already named by module and
+        attribute, and a resolved one is named from the class it holds. The trees that
+        were filled are recorded with a digest of their sources, so :meth:`load` can
+        tell whether the snapshot still matches the code.
+
+        Args:
+            path: Destination file.
+
+        Raises:
+            SweetTeaError: When an entry cannot be named — a class registered directly
+                from a construct with no module or qualified name — or the file cannot
+                be written.
+        """
+        with cls.__lock:
+            entries = []
+            for entry in cls.__registry:
+                # class_object, never class_def: exporting must not import anything.
+                module = entry.module or getattr(entry.class_object, "__module__", "")
+                attribute = entry.attribute or getattr(
+                    entry.class_object, "__qualname__", ""
+                )
+                if not module or not attribute or "." in attribute:
+                    raise SweetTeaError(
+                        f"Cannot export the entry for {entry.key!r}: it resolves to "
+                        f"{module or '?'}:{attribute or '?'}, which is not a plain "
+                        f"module attribute, so reading the snapshot back could not "
+                        f"find it again."
+                    )
+                entries.append(
+                    SnapshotEntry(
+                        key=entry.key,
+                        class_def=f"{module}:{attribute}",
+                        library=entry.library,
+                        label=entry.label,
+                    )
+                )
+
+            sources = [
+                SnapshotSource(
+                    module=filled,
+                    path=filled_path,
+                    digest=SnapshotSource.digest_of(filled_path),
+                )
+                for filled, filled_path in sorted(cls.__fills.items())
+            ]
+
+            RegistrySnapshot(
+                sources=sources, entries=entries, skipped=dict(cls.__skipped)
+            ).write(path)
+
+    @classmethod
+    def load(cls, path: str, verify: bool = True) -> None:
+        """
+        Register everything a snapshot records, without walking or importing a tree.
+
+        Entries are registered lazily, so a module is imported only when a factory or a
+        read of :attr:`~sweet_tea.entry.Entry.class_def` needs it. This is what makes a
+        snapshot cheaper than a fill rather than merely different: the walk, the parse
+        and the imports are all skipped.
+
+        Args:
+            path: Snapshot file to read.
+            verify: Whether to check the recorded source digests against the files on
+                disk first. Leave it on unless the caller has already established that
+                the snapshot is current — a stale snapshot registers names that no
+                longer exist, and the failure surfaces far from the cause.
+
+        Raises:
+            SweetTeaError: When the snapshot cannot be read, is malformed, names a
+                class in a form that cannot be resolved, or — with ``verify`` — no
+                longer matches its sources.
+        """
+        snapshot = RegistrySnapshot.read(path)
+
+        if verify:
+            stale = snapshot.stale_sources()
+            if stale:
+                names = ", ".join(source.module for source in stale)
+                raise SweetTeaError(
+                    f"Snapshot {path} no longer matches its sources ({names}). "
+                    f"Rebuild it with Registry.export(), or pass verify=False if the "
+                    f"difference is known to be harmless."
+                )
+
+        with cls.__lock:
+            for snapshot_entry in snapshot.entries:
+                try:
+                    module, attribute = snapshot_entry.coordinates
+                except ValueError as error:
+                    raise SweetTeaError(
+                        f"Snapshot {path} names {snapshot_entry.key!r} as "
+                        f"{snapshot_entry.class_def!r}: {error}"
+                    ) from error
+
+                cls.register_lazy(
+                    key=snapshot_entry.key,
+                    module=module,
+                    attribute=attribute,
+                    library=snapshot_entry.library,
+                    label=snapshot_entry.label,
+                )
+
+            cls.__skipped.update(snapshot.skipped)
+
+    @classmethod
     def _resolve_entry_class(cls, module: str, attribute: str) -> type:
         """
         Import a lazy entry's module and hand back the class it names.
@@ -371,6 +521,7 @@ class Registry:
                 SweetTeaWarning,
                 stacklevel=2,
             )
+            cls.__skipped[module_name] = "missing optional dependency"
             cls.__drop_lazy_entries(module_name)
             return
         except Exception:
@@ -394,6 +545,7 @@ class Registry:
                     class_def=class_def,
                     library=library,
                     label=label,
+                    attribute=class_name,
                 )
 
     @classmethod
@@ -532,6 +684,17 @@ class Registry:
 
             # Location of package
             pkg_dir = path_str
+
+            # Remember the tree so a snapshot can record what it was built from. Only
+            # roots are kept: this method recurses into subpackages, and a module whose
+            # ancestor is already recorded is part of that ancestor's walk. Judged by
+            # ancestry rather than a depth counter so an exception mid-walk cannot leave
+            # the bookkeeping wrong.
+            if not any(
+                module == filled or module.startswith(f"{filled}.")
+                for filled in cls.__fills
+            ):
+                cls.__fills[module] = path_str
 
             # Materialised once so the recursive calls below share a single tuple rather
             # than re-consuming a caller-supplied iterator, which would be exhausted
@@ -871,6 +1034,7 @@ class Registry:
                     class_def=class_def,
                     library=library,
                     label=label,
+                    attribute=class_name,
                 )
 
         except (ImportError, ModuleNotFoundError):
@@ -880,6 +1044,7 @@ class Registry:
                 SweetTeaWarning,
                 stacklevel=2,
             )
+            cls.__skipped[name_of_package] = "missing optional dependency"
             # Continue without registering this module
         except Exception:
             # Other errors (e.g., syntax errors, runtime errors) should still fail
