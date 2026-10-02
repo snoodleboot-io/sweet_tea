@@ -793,6 +793,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#reading-the-registry-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading the registry directly
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#adopting-it" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1408,6 +1419,22 @@ class, or a class behind an uninstalled dependency may appear in <code>list_keys
 vanish on resolution, and runtime-injected names are missing until something asks. Call
 <code>Registry.resolve_all()</code> when you need an exact registry — it imports everything, which
 is by definition eager.</p>
+<h3 id="reading-the-registry-directly">Reading the registry directly</h3>
+<p><code>Registry.entries()</code> returns unresolved entries too, and an unresolved entry has
+<code>class_def is None</code> — it carries <code>module</code> and <code>attribute</code> instead. Code that reads
+<code>entry.class_def</code> straight off <code>entries()</code> therefore sees <code>None</code> where it used to see a
+class:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># breaks under lazy filling: class_def may be None</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span><span class="o">.</span><span class="n">class_def</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span> <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span><span class="p">]</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># resolves properly</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">klass</span> <span class="o">=</span> <span class="n">InverterFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># or, when you genuinely want the whole registry materialised</span>
+</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">Registry</span><span class="o">.</span><span class="n">resolve_all</span><span class="p">()</span>
+</span></code></pre></div>
+<p>Going through a factory always resolves first, so factory callers never see <code>None</code>.
+Use <code>entry.is_lazy</code> to tell the two apart when walking entries yourself.</p>
 <h3 id="adopting-it">Adopting it</h3>
 <p>Lazy filling assumes nothing needs the registry to be complete <em>while modules are still
 importing</em>. A package that resolves classes through the registry at import time — in a
