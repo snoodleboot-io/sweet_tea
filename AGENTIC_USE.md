@@ -148,7 +148,19 @@ class CacheClient:
 
 **Contract:** `Registry.fill_registry(lazy=True)` registers the same keys by parsing
 each module instead of importing it, and imports a module the first time a factory
-needs a class from it. A resolved module matches eager registration exactly.
+needs a class from it. A resolved module matches eager registration exactly, plus any
+entry registered by hand with `register_lazy`.
+
+`Registry.register_lazy(key, module, attribute, library="", label="")` adds one
+deferred entry with no scan and no tree walk, keeping the key, library and label as
+given. Resolving its module also registers what discovery finds there, so an alias and
+the class's own discovered key both survive — two keys, one class. An entry whose
+`attribute` the imported module does not bind to a class is dropped on resolution, the
+same rule a scanned name is held to.
+
+**Must not:** expect a key registered this way to need the sweep. It names its own
+module, so resolution imports that module and stops — including under
+`lazy="strict"`.
 
 **Must not:** assume the registry is complete during import. Code that calls
 `Factory.create` or reads `Registry.entries()` from a module body fails under lazy
