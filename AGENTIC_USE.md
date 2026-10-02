@@ -147,9 +147,11 @@ needs a class from it. A resolved module matches eager registration exactly.
 `Factory.create` or reads `Registry.entries()` from a module body fails under lazy
 filling; name those modules in `eager=[...]`, or defer the lookup.
 
-`Registry.entries()` includes unresolved entries, whose `class_def` is `None` and
-whose `module`/`attribute` name the target. Read a class through a factory, or call
-`Registry.resolve_all()` first; `entry.is_lazy` distinguishes them.
+`Registry.entries()` includes unresolved entries. Reading `entry.class_def` imports
+that entry's module and returns the class, so introspection keeps working — but the
+read can raise `SweetTeaError`, and touching every entry's `class_def` is an eager
+fill. `entry.is_lazy` checks the state without resolving; `entry.class_object` is the
+stored class, `None` while unresolved.
 
 `Registry.lazy_audit(path=..., module=...)` reports what in a tree would not survive
 lazy filling, and `fill_registry(lazy=True, eager="auto")` acts on that report. The

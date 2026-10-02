@@ -211,24 +211,32 @@ is by definition eager.
 
 ### Reading the registry directly
 
-`Registry.entries()` returns unresolved entries too, and an unresolved entry has
-`class_def is None` — it carries `module` and `attribute` instead. Code that reads
-`entry.class_def` straight off `entries()` therefore sees `None` where it used to see a
-class:
+`Registry.entries()` returns unresolved entries too, and reading `entry.class_def` on
+one imports its module and hands back the class — so code that introspects the registry
+keeps working:
 
 ```python
-# breaks under lazy filling: class_def may be None
-matches = [e.class_def for e in Registry.entries() if e.key == name]
-
-# resolves properly
-klass = InverterFactory.create(name)
-
-# or, when you genuinely want the whole registry materialised
-Registry.resolve_all()
+# resolves only the entries this filter actually selected
+matches = [
+    entry.class_def
+    for entry in Registry.entries()
+    if entry.key == name and entry.library == "mylib"
+]
 ```
 
-Going through a factory always resolves first, so factory callers never see `None`.
-Use `entry.is_lazy` to tell the two apart when walking entries yourself.
+Because the filter runs first, only the matching entries' modules are imported. A loop
+that touches `class_def` on *every* entry is effectively an eager fill.
+
+Two things to know:
+
+- **Reading an attribute can now raise.** A module that fails to import, or a name the
+  scanner guessed at that turns out not to be a class, raises `SweetTeaError` on access.
+- **`entry.is_lazy` does not resolve.** Use it to check whether a read would import
+  anything. `entry.class_object` exposes the stored class without resolving, for code
+  that wants to see unresolved entries as unresolved.
+
+`Registry.resolve_all()` still materialises everything at once when that is what you
+want.
 
 ### Adopting it
 
