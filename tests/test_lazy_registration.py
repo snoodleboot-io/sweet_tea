@@ -238,6 +238,22 @@ class TestLazySweep(TestCase):
         self.assertEqual(instance.__class__.__name__, "LoopA")
         self.assertTrue(any("loopa" in str(w.message) for w in caught))
 
+    def test_already_imported_modules_are_harvested_before_sweeping(self):
+        """A pending module that something else imported is reconciled for free."""
+        fill(lazy=True)
+        import tests.lazy_cases.c14_globals  # noqa: F401  (imported as a side effect would be)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", SweetTeaWarning)
+            instance = Factory.create("loopa")
+
+        self.assertEqual(instance.__class__.__name__, "LoopA")
+        self.assertEqual(
+            [str(w.message) for w in caught if "remaining module" in str(w.message)],
+            [],
+            "harvesting an already-imported module should not need a sweep",
+        )
+
     def test_strict_refuses_to_sweep(self):
         """lazy="strict" turns the sweep into an error naming the fix."""
         fill(lazy="strict")
@@ -293,7 +309,7 @@ class TestLazyImportFailures(TestCase):
 
 
 class TestLazyEntryIntrospection(TestCase):
-    """What direct readers of Registry.entries() see while entries are unresolved."""
+    """Reading an entry's class resolves it, so introspection keeps working (SWE-13)."""
 
     def setUp(self):
         reset_registry()
@@ -302,29 +318,84 @@ class TestLazyEntryIntrospection(TestCase):
     def tearDown(self):
         reset_registry()
 
-    def test_unresolved_entries_expose_no_class(self):
-        """Documented contract: class_def is None until the module is imported.
+    def imported_cases(self) -> set[str]:
+        return {n for n in sys.modules if n.startswith(CASES_MODULE + ".")}
 
-        Code that reads entry.class_def straight off entries() — rather than going
-        through a factory — sees None for an unresolved entry instead of a class.
-        """
+    def test_reading_class_def_resolves_the_entry(self):
+        """class_def is a class again, not None, even before anything else ran."""
         fill(lazy=True)
-        unresolved = [entry for entry in Registry.entries() if entry.is_lazy]
+        entry = next(e for e in Registry.entries() if e.key == "plain")
 
-        self.assertTrue(unresolved)
-        self.assertIsNone(unresolved[0].class_def)
-        self.assertTrue(unresolved[0].module)
-        self.assertTrue(unresolved[0].attribute)
+        self.assertTrue(entry.is_lazy)
+        self.assertEqual(entry.class_def.__name__, "Plain")
+
+    def test_reading_class_def_imports_only_that_module(self):
+        """A filtered read resolves what it touched and nothing else."""
+        fill(lazy=True)
+        entry = next(e for e in Registry.entries() if e.key == "plain")
+        entry.class_def
+
+        self.assertEqual(self.imported_cases(), {f"{CASES_MODULE}.c01_plain"})
+
+    def test_is_lazy_does_not_resolve(self):
+        """Asking the question must not answer it by importing."""
+        fill(lazy=True)
+        states = [entry.is_lazy for entry in Registry.entries()]
+
+        self.assertTrue(any(states))
+        self.assertEqual(self.imported_cases(), set())
+
+    def test_filling_does_not_resolve(self):
+        """Dedupe reads the stored class, so registration imports nothing."""
+        fill(lazy=True)
+
+        self.assertEqual(self.imported_cases(), set())
+
+    def test_consumer_comprehension_pattern_works(self):
+        """The shape pirn-agents uses: filter entries, then read class_def."""
+        fill(lazy=True)
+
+        # fill_registry defaults library to the module name, as pirn's does.
+        matches = [
+            entry.class_def
+            for entry in Registry.entries()
+            if entry.key == "plain"
+            and entry.library == CASES_MODULE
+            and entry.label == ""
+        ]
+
+        self.assertEqual(len(matches), 1)
+        self.assertIsInstance(matches[0], type)
+        self.assertEqual(matches[0].__name__, "Plain")
+
+    def test_resolution_is_memoised_on_the_copy(self):
+        """Reading twice through one copy must not import twice."""
+        fill(lazy=True)
+        entry = next(e for e in Registry.entries() if e.key == "plain")
+
+        first = entry.class_def
+        self.assertFalse(entry.is_lazy)
+        self.assertIs(entry.class_def, first)
+
+    def test_provisional_guess_that_is_not_a_class_raises(self):
+        """A name read from source that turns out to be a value reports clearly."""
+        fill(lazy=True)
+        entry = next(e for e in Registry.entries() if e.key == "shadowed")
+
+        with self.assertRaises(SweetTeaError) as raised:
+            entry.class_def
+
+        self.assertIn("is not a class", str(raised.exception))
 
     def test_resolve_all_gives_every_entry_a_class(self):
-        """The escape hatch for introspection: resolve first, then read."""
+        """The bulk escape hatch still works."""
         fill(lazy=True)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SweetTeaWarning)
             Registry.resolve_all()
 
         self.assertTrue(
-            all(entry.class_def is not None for entry in Registry.entries())
+            all(entry.class_object is not None for entry in Registry.entries())
         )
 
     def test_factories_never_hand_back_an_unresolved_class(self):

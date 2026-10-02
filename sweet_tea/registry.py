@@ -17,6 +17,7 @@ import inspect
 import logging
 import os
 import pkgutil
+import sys
 import threading
 import traceback
 import warnings
@@ -25,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from sweet_tea.audit_finding import AuditFinding
-from sweet_tea.entry import Entry
+from sweet_tea.entry import Entry, set_resolver
 from sweet_tea.lazy_audit import LazyAudit
 from sweet_tea.lazy_scanner import LazyScanner
 from sweet_tea.sweet_tea_error import SweetTeaError
@@ -111,8 +112,10 @@ class Registry:
                         # imported, so it cannot answer issubclass. Factories call
                         # ensure_resolved before reaching here, which turns every
                         # candidate for the requested key into a normal entry.
-                        if filtered_type.class_def is not None
-                        and issubclass(filtered_type.class_def, lookup_type)
+                        # class_object, not class_def: building a type slot must not
+                        # import the whole tree through the resolving property.
+                        if filtered_type.class_object is not None
+                        and issubclass(filtered_type.class_object, lookup_type)
                     ]
             return cls.__lookup[lookup_type].copy()
 
@@ -237,6 +240,20 @@ class Registry:
             if any(entry.key in wanted for entry in cls.__registry):
                 return
 
+            # Before importing anything, harvest the pending modules something else
+            # already imported — a module pulled in as a side effect of resolving
+            # another is in sys.modules but still unreconciled, so a class it creates
+            # at runtime is invisible. Reconciling those costs no imports and often
+            # avoids the sweep entirely.
+            for module_name in sorted(cls.__unresolved):
+                if module_name in sys.modules:
+                    cls.__resolve_module(module_name)
+
+            if not cls.__unresolved:
+                return
+            if any(entry.key in wanted for entry in cls.__registry):
+                return
+
             requested = ", ".join(sorted(wanted))
             if cls.__no_sweep:
                 raise SweetTeaError(
@@ -257,6 +274,49 @@ class Registry:
                 stacklevel=2,
             )
             cls.resolve_all()
+
+    @classmethod
+    def _resolve_entry_class(cls, module: str, attribute: str) -> type:
+        """
+        Import a lazy entry's module and hand back the class it names.
+
+        Installed on :mod:`sweet_tea.entry` so that reading ``Entry.class_def`` on an
+        unresolved entry works like reading it on any other — which is what keeps code
+        that introspects :meth:`entries` directly working under lazy filling (SWE-13).
+
+        The registry's own copy of the entry is reconciled at the same time, so the
+        import is paid once however it was triggered.
+
+        Args:
+            module: Dotted module path from the entry.
+            attribute: Module attribute the class is bound to.
+
+        Returns:
+            The class.
+
+        Raises:
+            SweetTeaError: When the module cannot be imported, or no longer binds a
+                class under that name — the case of a provisional guess that turned out
+                to be something else.
+        """
+        with cls.__lock:
+            cls.__resolve_module(module)
+
+        try:
+            module_object = importlib.import_module(module)
+        except Exception as error:
+            raise SweetTeaError(
+                f"Cannot resolve {attribute} from {module}: {error}"
+            ) from error
+
+        resolved = getattr(module_object, attribute, None)
+        if not isinstance(resolved, type):
+            raise SweetTeaError(
+                f"{module}.{attribute} is not a class, so the lazily registered name "
+                f"{attribute!r} cannot be resolved. It was read from the source as a "
+                f"possible class and turned out to be {type(resolved).__name__}."
+            )
+        return resolved
 
     @classmethod
     def resolve_all(cls) -> None:
@@ -828,3 +888,8 @@ class Registry:
                 f"Error processing module {name_of_package}: {error_message}"
             )
             raise SweetTeaError(error_message)
+
+
+# Entry.class_def resolves through the registry; the hook is installed here because
+# entry.py cannot import this module without a cycle.
+set_resolver(Registry._resolve_entry_class)

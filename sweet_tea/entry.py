@@ -15,7 +15,25 @@
 Registry entry model for storing class registration information.
 """
 
-from pydantic import BaseModel, Field
+from typing import Callable
+
+from pydantic import BaseModel, ConfigDict, Field
+
+#: Set by :mod:`sweet_tea.registry` at import time. Takes an entry's module and
+#: attribute and returns the class, importing the module if needed. It lives here as a
+#: hook because ``registry`` imports ``entry``, so ``entry`` cannot import it back.
+_resolver: Callable[[str, str], type] | None = None
+
+
+def set_resolver(resolver: Callable[[str, str], type]) -> None:
+    """
+    Install the function that turns a lazy entry's coordinates into a class.
+
+    Args:
+        resolver: Callable taking (module, attribute) and returning the class.
+    """
+    global _resolver
+    _resolver = resolver
 
 
 class Entry(BaseModel):
@@ -31,11 +49,12 @@ class Entry(BaseModel):
         examples=["myclass", "databaseconnection"],
     )
 
-    class_def: type | None = Field(
+    class_object: type | None = Field(
         default=None,
+        alias="class_def",
         description=(
-            "The actual class type that can be instantiated, or None while the entry "
-            "is registered lazily and its module has not been imported yet"
+            "The class as stored. None while the entry is registered lazily and its "
+            "module has not been imported; read :attr:`class_def` to resolve it."
         ),
     )
 
@@ -63,10 +82,48 @@ class Entry(BaseModel):
         examples=["DatabaseConnection"],
     )
 
+    model_config = ConfigDict(populate_by_name=True)
+
+    @property
+    def class_def(self) -> type | None:
+        """
+        The registered class, imported on first read if the entry is lazy.
+
+        Reading this is how a lazily registered entry becomes a real one, so existing
+        code that introspects the registry keeps seeing a class rather than None:
+
+            matches = [entry.class_def for entry in Registry.entries() if ...]
+
+        Only this entry's own module is imported, so a filtered read resolves only what
+        it touched. Use :attr:`is_lazy` to check the state without importing anything.
+
+        Returns:
+            The class, or None for an entry that is neither resolved nor resolvable.
+
+        Raises:
+            SweetTeaError: When importing the module fails. Reading an attribute can
+                therefore raise, which is the cost of keeping the old contract.
+        """
+        if self.class_object is not None:
+            return self.class_object
+        if not self.module or not self.attribute or _resolver is None:
+            return None
+
+        resolved = _resolver(self.module, self.attribute)
+        # Memoised on this copy: entries() hands out copies, so resolving through one
+        # must not leave the next read of the same copy importing again.
+        self.class_object = resolved
+        return resolved
+
     @property
     def is_lazy(self) -> bool:
-        """Whether this entry still needs its module imported before use."""
-        return self.class_def is None
+        """
+        Whether this entry still needs its module imported.
+
+        Deliberately reads the stored field rather than :attr:`class_def`, so asking
+        the question does not answer it by importing.
+        """
+        return self.class_object is None
 
     @property
     def identity(self) -> tuple[str, object, str, str]:
@@ -78,9 +135,12 @@ class Entry(BaseModel):
         — which also means a lazy and an eager registration of one class do not
         collapse into a single entry (see SWE-10).
         """
+        # Reads the stored field, never the resolving property: computing identity
+        # happens during registration, and importing the tree while filling it is
+        # exactly what lazy filling exists to avoid.
         target: object = (
-            self.class_def
-            if self.class_def is not None
+            self.class_object
+            if self.class_object is not None
             else f"{self.module}:{self.attribute}"
         )
         return (self.key, target, self.library, self.label)
