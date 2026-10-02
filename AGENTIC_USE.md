@@ -123,6 +123,13 @@ raises `SweetTeaError` naming the key, with the `ValidationError` as `__cause__`
 Unknown keys are dropped unless the model sets `extra="forbid"`. A non-model
 declaration raises `SweetTeaError` on construction. `InverterFactory` ignores it.
 
+`fill_registry` registers the classes a module defines, judged by `__module__`, so an
+imported class is not registered again under every module importing it. One exception:
+a class built by a helper elsewhere in the same package — `Thing = make_class("Thing")`,
+where `type()` stamps `__module__` with the helper's module — belongs to no module at
+all, and is registered where it is bound. A class built by a helper in a *different*
+distribution is still not registered.
+
 **Must not:** rely on the constructor being called with no arguments when
 `configuration` is omitted — it is called as `class_def()`, so any parameter
 without a default raises `TypeError` from your own `__init__`, not from
