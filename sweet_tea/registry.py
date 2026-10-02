@@ -333,9 +333,12 @@ class Registry:
         Write the filled registry to a file, so it can be read back without a walk.
 
         Nothing is imported: an unresolved entry is already named by module and
-        attribute, and a resolved one is named from the class it holds. The trees that
-        were filled are recorded with a digest of their sources, so :meth:`load` can
-        tell whether the snapshot still matches the code.
+        attribute, and a resolved one is named from the class it holds. Locating a
+        tree's root package to record its relative position goes through
+        :func:`importlib.util.find_spec` on the top-level name, which executes nothing
+        either. The trees that were filled are recorded with a digest of their sources
+        and their position inside their root package, so :meth:`load` can tell whether
+        the snapshot still matches the code wherever that package is installed.
 
         Args:
             path: Destination file.
@@ -373,6 +376,7 @@ class Registry:
                 SnapshotSource(
                     module=filled,
                     path=filled_path,
+                    relative_path=SnapshotSource.relative_to_root(filled, filled_path),
                     digest=SnapshotSource.digest_of(filled_path),
                 )
                 for filled, filled_path in sorted(cls.__fills.items())
@@ -397,7 +401,10 @@ class Registry:
             verify: Whether to check the recorded source digests against the files on
                 disk first. Leave it on unless the caller has already established that
                 the snapshot is current — a stale snapshot registers names that no
-                longer exist, and the failure surfaces far from the cause.
+                longer exist, and the failure surfaces far from the cause. The sources
+                are looked for where their root package is installed now, so a snapshot
+                built elsewhere — in CI, then shipped inside the wheel — verifies on
+                its own merits rather than being refused for having moved.
 
         Raises:
             SweetTeaError: When the snapshot cannot be read, is malformed, names a

@@ -41,7 +41,14 @@ class RegistrySnapshot(BaseModel):
     """
 
     #: Incremented when the on-disk shape changes in a way older readers cannot handle.
-    FORMAT_VERSION: ClassVar[int] = 1
+    #:
+    #: 2 added ``relative_path`` to each source (SWE-18). Readers that ignore it reach a
+    #: *different verdict* on the same file rather than merely losing detail — they
+    #: check the absolute export directory and declare a perfectly current snapshot
+    #: stale — so the version moved rather than the field being added quietly. A
+    #: version 1 file still loads here: no relative record means check the absolute
+    #: path, exactly as before.
+    FORMAT_VERSION: ClassVar[int] = 2
 
     version: int = Field(
         default=FORMAT_VERSION,
