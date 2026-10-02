@@ -146,6 +146,20 @@ class TestSnapshotRoundTrip(TestCase):
         Registry.load(self.path)
         self.assertIn(f"{CASES_MODULE}.d03_optional", Registry.skipped())
 
+    def test_on_disk_entry_keys_are_the_snapshot_format(self):
+        """Entry's own serialisation settings must not reach the file format."""
+        fill(lazy=True)
+        Registry.export(self.path)
+
+        with open(self.path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        self.assertTrue(payload["entries"])
+        for written in payload["entries"]:
+            self.assertEqual(set(written), {"key", "class_def", "library", "label"})
+            # SnapshotEntry.class_def is the module:attribute string, not a class.
+            self.assertIsInstance(written["class_def"], str)
+
     def test_sources_record_the_filled_root_only(self):
         """Subpackages are part of their root's walk, not separate sources."""
         fill(lazy=True)

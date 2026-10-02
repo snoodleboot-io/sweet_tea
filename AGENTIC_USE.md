@@ -158,7 +158,10 @@ filling; name those modules in `eager=[...]`, or defer the lookup.
 that entry's module and returns the class, so introspection keeps working — but the
 read can raise `SweetTeaError`, and touching every entry's `class_def` is an eager
 fill. `entry.is_lazy` checks the state without resolving; `entry.class_object` is the
-stored class, `None` while unresolved.
+stored class, `None` while unresolved. `entry.model_dump()` names the class
+`class_def` and reports it as stored — `None` for an unresolved entry, importing
+nothing — and is not JSON-serialisable once resolved, because a live class is not
+data; use `Registry.export(path)` for that.
 
 `Registry.lazy_audit(path=..., module=...)` reports what in a tree would not survive
 lazy filling, and `fill_registry(lazy=True, eager="auto")` acts on that report. The

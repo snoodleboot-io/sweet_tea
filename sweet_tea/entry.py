@@ -42,6 +42,12 @@ class Entry(BaseModel):
 
     Each entry represents a class that has been registered with the factory system,
     including metadata for filtering and instantiation.
+
+    ``model_dump()`` names the class ``class_def`` — the name an entry is constructed
+    with — and reports it as stored, so dumping a lazy entry yields None rather than
+    importing. A resolved entry dumps a live class, which no JSON encoder accepts, so
+    :class:`~sweet_tea.registry_snapshot.RegistrySnapshot` stays the serialisation
+    path for anything leaving the process.
     """
 
     key: str = Field(
@@ -54,7 +60,8 @@ class Entry(BaseModel):
         alias="class_def",
         description=(
             "The class as stored. None while the entry is registered lazily and its "
-            "module has not been imported; read :attr:`class_def` to resolve it."
+            "module has not been imported; read :attr:`class_def` to resolve it. "
+            "Serialises under its alias, so a dump reports it as ``class_def``."
         ),
     )
 
@@ -82,7 +89,17 @@ class Entry(BaseModel):
         examples=["DatabaseConnection"],
     )
 
-    model_config = ConfigDict(populate_by_name=True)
+    # populate_by_name lets construction keep saying ``class_def=...`` after the field
+    # was renamed to free that name for the resolving property below (SWE-13).
+    # serialize_by_alias finishes that job in the other direction: without it
+    # ``model_dump()`` emitted ``class_object``, publishing the storage name this
+    # model exists to hide and forcing every caller to pass ``by_alias=True`` to get
+    # the name they constructed with. Serialisation stays a read of the stored field,
+    # never of the property, so dumping a lazy entry yields ``class_def: None`` and
+    # imports nothing -- a dump reports what the entry holds, not what it could
+    # resolve to. ``model_dump(by_alias=False)`` remains the way to ask for the
+    # storage name on purpose.
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
     @property
     def class_def(self) -> type | None:
