@@ -748,6 +748,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#singleton-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Singleton Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lazy-registration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1429,13 +1440,30 @@
 </span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
 </span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="n">app</span> <span class="o">=</span> <span class="n">Application</span><span class="p">(</span><span class="n">db_factory</span><span class="p">,</span> <span class="n">cache_factory</span><span class="p">)</span>
 </span></code></pre></div>
+<h2 id="singleton-configuration">Singleton Configuration</h2>
+<p>A cached singleton is returned as it is, and the <code>configuration</code> given to a later call
+is discarded — the instance cannot be rebuilt without breaking the identity other
+holders depend on. Since that used to happen silently, a configuration differing from
+the one the instance was built with now warns:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"primary"</span><span class="p">})</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"replica"</span><span class="p">})</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="c1"># SweetTeaWarning: Ignoring the configuration passed for singleton 'pg': an instance</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># is already cached and is not rebuilt, so the configuration from the first call</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="c1"># still applies.</span>
+</span></code></pre></div>
+<p>Fetching an existing singleton without a configuration is the normal idiom and stays
+silent. A model and an equivalent dict compare equal, so switching between them does
+not warn. Where a configuration holds values whose comparison is not a plain boolean —
+a numpy array, say — drift cannot be judged and nothing is said.</p>
+<p>Use <code>Factory</code> when each caller needs its own configuration, or
+<code>SingletonFactory.pop(key)</code> to discard the cached instance before building a new one.</p>
 <h2 id="lazy-registration">Lazy Registration</h2>
 <p><code>fill_registry</code> imports every module in the tree to find the classes in it. With
 <code>lazy=True</code> it reads the names out of the source instead, and imports a module only
 when a factory first needs a class from it:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>   <span class="c1"># imports just that module</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>   <span class="c1"># imports just that module</span>
 </span></code></pre></div>
 <p>Measured on a 880-module package: filling drops from 1,165 ms, 46 MB and 1,600 imported
 modules to 552 ms, 4.3 MB and none. The saving is whatever you never ask for — and it
@@ -1451,11 +1479,11 @@ aliases, <code>type()</code> calls, <code>namedtuple</code>, <code>Enum</code> a
 by reading the source. Classes injected at runtime — <code>globals()[name] = type(...)</code>,
 <code>setattr(module, ...)</code> — leave no trace to read. Asking for one of those triggers a
 fallback sweep that imports everything still pending and warns:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>SweetTeaWarning: Importing 43 remaining module(s) to look for loopa: no lazily
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>registered name matched. Add the defining module to fill_registry(eager=[...]).
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>SweetTeaWarning: Importing 43 remaining module(s) to look for loopa: no lazily
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>registered name matched. Add the defining module to fill_registry(eager=[...]).
 </span></code></pre></div>
 <p>Name those modules up front and the sweep never happens:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eager</span><span class="o">=</span><span class="p">[</span><span class="s2">"myapp.plugins.*"</span><span class="p">])</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eager</span><span class="o">=</span><span class="p">[</span><span class="s2">"myapp.plugins.*"</span><span class="p">])</span>
 </span></code></pre></div>
 <p><code>eager</code> patterns match the same way <code>exclude</code> patterns do, and <code>exclude</code> still wins.
 Passing <code>eager</code> without <code>lazy</code> is an error rather than a no-op.</p>
@@ -1473,12 +1501,12 @@ is by definition eager.</p>
 <p><code>Registry.entries()</code> returns unresolved entries too, and reading <code>entry.class_def</code> on
 one imports its module and hands back the class — so code that introspects the registry
 keeps working:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># resolves only the entries this filter actually selected</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">entry</span><span class="o">.</span><span class="n">class_def</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">entry</span><span class="o">.</span><span class="n">library</span> <span class="o">==</span> <span class="s2">"mylib"</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># resolves only the entries this filter actually selected</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>    <span class="n">entry</span><span class="o">.</span><span class="n">class_def</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">entry</span><span class="o">.</span><span class="n">library</span> <span class="o">==</span> <span class="s2">"mylib"</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="p">]</span>
 </span></code></pre></div>
 <p>Because the filter runs first, only the matching entries' modules are imported. A loop
 that touches <code>class_def</code> on <em>every</em> entry is effectively an eager fill.</p>
@@ -1502,11 +1530,11 @@ defer their lookups to first use.</p>
 <p>Filling a registry walks a package tree. Lazy filling skips the imports but still reads
 every source file. A snapshot skips both — write the filled registry once, read it back
 as data:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>      <span class="c1"># build step</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>        <span class="c1"># every run after</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>      <span class="c1"># build step</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>        <span class="c1"># every run after</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Measured on an 880-module package, all producing the same 799 entries:</p>
 <table>
@@ -1547,13 +1575,13 @@ a later fill would pass, so it is deliberately conservative: editing a file that
 never registered still marks the snapshot stale. <code>__pycache__</code> is ignored, since
 bytecode is derived.</p>
 <h3 id="what-a-snapshot-records">What a snapshot records</h3>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">}],</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span><span class="w"> </span><span class="s2">"missing optional dependency"</span><span class="p">}</span>
-</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="p">}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">}],</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span><span class="w"> </span><span class="s2">"missing optional dependency"</span><span class="p">}</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="p">}</span>
 </span></code></pre></div>
 <p><code>class_def</code> is <code>module:attribute</code> — the attribute the class is <em>bound to</em>, which is how
 the registry keys it and is not always the class's own <code>__name__</code>.</p>
