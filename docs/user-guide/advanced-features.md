@@ -151,6 +151,29 @@ cache_factory = AbstractFactory[CacheInterface]
 app = Application(db_factory, cache_factory)
 ```
 
+## Singleton Configuration
+
+A cached singleton is returned as it is, and the `configuration` given to a later call
+is discarded — the instance cannot be rebuilt without breaking the identity other
+holders depend on. Since that used to happen silently, a configuration differing from
+the one the instance was built with now warns:
+
+```python
+SingletonFactory.create("pg", configuration={"host": "primary"})
+SingletonFactory.create("pg", configuration={"host": "replica"})
+# SweetTeaWarning: Ignoring the configuration passed for singleton 'pg': an instance
+# is already cached and is not rebuilt, so the configuration from the first call
+# still applies.
+```
+
+Fetching an existing singleton without a configuration is the normal idiom and stays
+silent. A model and an equivalent dict compare equal, so switching between them does
+not warn. Where a configuration holds values whose comparison is not a plain boolean —
+a numpy array, say — drift cannot be judged and nothing is said.
+
+Use `Factory` when each caller needs its own configuration, or
+`SingletonFactory.pop(key)` to discard the cached instance before building a new one.
+
 ## Lazy Registration
 
 `fill_registry` imports every module in the tree to find the classes in it. With
