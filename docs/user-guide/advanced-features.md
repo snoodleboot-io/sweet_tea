@@ -257,6 +257,11 @@ Two things to know:
 - **`entry.is_lazy` does not resolve.** Use it to check whether a read would import
   anything. `entry.class_object` exposes the stored class without resolving, for code
   that wants to see unresolved entries as unresolved.
+- **`entry.model_dump()` reports stored state.** It names the class `class_def` — the
+  name entries are constructed with — and gives `None` for an unresolved entry rather
+  than importing to fill it in. Pass `by_alias=False` if you want the storage field
+  name instead. A dump of a resolved entry holds a live class, which no JSON encoder
+  accepts, so `Registry.export()` is the way to write the registry as data.
 
 `Registry.resolve_all()` still materialises everything at once when that is what you
 want.

@@ -345,6 +345,15 @@ class TestLazyEntryIntrospection(TestCase):
         self.assertTrue(any(states))
         self.assertEqual(self.imported_cases(), set())
 
+    def test_dumping_entries_does_not_resolve(self):
+        """Serialising reports stored state; it must not import to fill it in."""
+        fill(lazy=True)
+        dumps = [entry.model_dump() for entry in Registry.entries()]
+
+        self.assertTrue(any(dump["class_def"] is None for dump in dumps))
+        self.assertTrue(all("class_object" not in dump for dump in dumps))
+        self.assertEqual(self.imported_cases(), set())
+
     def test_filling_does_not_resolve(self):
         """Dedupe reads the stored class, so registration imports nothing."""
         fill(lazy=True)
