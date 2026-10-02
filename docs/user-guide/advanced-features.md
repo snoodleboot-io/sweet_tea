@@ -85,15 +85,62 @@ old_cache = SingletonFactory.pop("cache")        # Returns and removes instance
 SingletonFactory.clear()                         # Remove all cached instances
 ```
 
-## Optional Dependencies
+## Modules That Will Not Import
 
-The system gracefully handles missing optional dependencies:
+A fill walks a tree and imports what it finds, and some of what it finds cannot be
+imported here. `fill_registry` warns and moves on, whatever the import raised, so such
+a module costs its own classes and no others:
 
 ```python
-# If a module has optional imports, it will warn but continue
-# sweet_tea/registry.py will issue SweetTeaWarning for missing dependencies
-# but registration continues for available classes
+Registry.fill_registry(path="/.../site-packages/click", module="click")
+# SweetTeaWarning: Skipping module click._winconsole: import failed: AssertionError.
+# Nothing it defines is registered. If the module is meant to import here, that
+# exception is a bug rather than a platform or environment guard.
+
+Registry.skipped()
+# {'click._winconsole': 'import failed: AssertionError'}
 ```
+
+`click._winconsole` opens with `assert sys.platform == "win32"`. Before SWE-15 only
+`ImportError` and `ModuleNotFoundError` were survivable and everything else raised
+`SweetTeaError`, so filling over an installed click on Linux abandoned the walk at
+that module: 9 of click's 80 classes registered, and the fill itself failed.
+
+`Registry.skipped()` maps each such module to
+`<category>: <ExceptionType>[: <message>]`. The category separates the two things a
+caller does about them:
+
+- `missing optional dependency` — an `ImportError`. Install the package, or exclude
+  the module from the fill.
+- `import failed` — anything else. A platform guard, or a module wanting an
+  environment it does not have, which is normal and needs nothing; or a genuine bug
+  in that module, which the exception type is there to let you spot.
+
+Nothing from a module that failed is registered: its classes are collected before any
+of them is registered, so a skip is never half-applied.
+
+A caller who would rather not continue needs no option for it, because the warning is
+that switch:
+
+```python
+import warnings
+from sweet_tea.sweet_tea_warning import SweetTeaWarning
+
+warnings.simplefilter("error", SweetTeaWarning)
+Registry.fill_registry(path="...", module="myapp")  # raises on the first skip
+```
+
+The escalated warning is raised from inside the handler for the original exception, so
+its traceback comes out chained to it. The module is recorded in `skipped()` before the
+warning is issued, so the reason is readable either way. The traceback is also logged
+at `DEBUG` for a failure that is not a missing dependency.
+
+Lazy filling reports the same thing in the same words, but at the lookup that first
+needed the module rather than during the walk: its entries are dropped, the key stops
+resolving, and `skipped()` gains the identical line. Reading `Entry.class_def` for one
+named class in such a module still raises `SweetTeaError` — that call has to hand back
+a class, and there is none — with the exception type in the message, which a bare
+`assert` supplies no other way.
 
 ## Custom Error Handling
 
@@ -319,17 +366,19 @@ bytecode is derived.
   "sources": [{"module": "myapp", "path": "/srv/myapp", "digest": "..."}],
   "entries": [{"key": "database_connection", "class_def": "myapp.db:DatabaseConnection",
                "library": "myapp", "label": ""}],
-  "skipped": {"myapp.optional_backend": "missing optional dependency"}
+  "skipped": {"myapp.optional_backend":
+                "missing optional dependency: ModuleNotFoundError: No module named 'redis'"}
 }
 ```
 
 `class_def` is `module:attribute` — the attribute the class is *bound to*, which is how
 the registry keys it and is not always the class's own `__name__`.
 
-Skips are recorded on purpose. Filling warns and skips a module whose import fails
-because an optional dependency is missing; a snapshot that dropped that would bake in
-the install profile of the machine that built it, and a reader could not tell "not
-registered" from "not installed". `Registry.skipped()` reports them either way.
+Skips are recorded on purpose. Filling warns and skips a module whose import raises; a
+snapshot that dropped that would bake in the install profile *and the platform* of the
+machine that built it, and a reader could not tell "not registered" from "not
+installed", or either of those from "that module does not import here".
+`Registry.skipped()` reports them either way, with the exception type in the reason.
 
 ### Determinism
 

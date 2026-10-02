@@ -40,9 +40,10 @@ class Registry:
     """
     Global registry for class definitions that can be instantiated via factories.
 
-    This registry automatically discovers and registers classes from packages,
-    supporting optional dependencies that may not be installed. Classes with
-    missing dependencies are skipped with a warning rather than failing registration.
+    This registry automatically discovers and registers classes from packages. A
+    module whose import raises — a missing optional dependency, a platform guard, or
+    a bug — is skipped with a warning naming what it raised rather than failing the
+    whole registration; :meth:`skipped` records them.
 
     The registry supports typed lookups for abstract factories, allowing filtering
     by inheritance hierarchy.
@@ -85,8 +86,10 @@ class Registry:
     # Nesting depth of fill_registry, which recurses into subpackages.
     __fill_depth: int = 0
 
-    # Modules that were not registered, mapped to why. Exported alongside the entries
-    # so a snapshot's reader can tell "not registered" from "not installed".
+    # Modules that were not registered, mapped to why: the category of the failure
+    # and the exception that caused it. Exported alongside the entries so a
+    # snapshot's reader can tell "not registered" from "not installed", and either of
+    # those from "this module is broken here".
     __skipped: dict[str, str] = {}
 
     __lookup: dict[Any, list[Entry]] = {}
@@ -306,9 +309,17 @@ class Registry:
         """
         Modules that were not registered, mapped to why.
 
-        Filling warns and skips a module whose import fails on a missing optional
-        dependency. Without this, a caller cannot tell a class that was never written
-        from one whose dependency is not installed.
+        Filling warns and skips a module whose import raises, whatever it raised.
+        Without this, a caller cannot tell a class that was never written from one
+        whose module could not be imported on this machine.
+
+        Each reason reads ``<category>: <ExceptionType>[: <message>]``. The category
+        is either ``missing optional dependency`` — an ``ImportError``, so the
+        install profile showing through — or ``import failed`` for anything else: a
+        platform guard like ``click._winconsole``'s ``assert sys.platform ==
+        "win32"``, a module wanting an environment variable, or a genuine bug. The
+        exception type is part of the reason precisely so the last of those can be
+        told from the first two without re-running the fill.
 
         Returns:
             Copy of the skip record.
@@ -437,6 +448,11 @@ class Registry:
         The registry's own copy of the entry is reconciled at the same time, so the
         import is paid once however it was triggered.
 
+        A module whose import raises is only warned about during a fill, but reading
+        one specific class from it still raises here: the property has to hand back a
+        class, and there is none. What :meth:`skipped` records is the fill's verdict
+        on a module; this is a caller asking for a named class in it.
+
         Args:
             module: Dotted module path from the entry.
             attribute: Module attribute the class is bound to.
@@ -455,8 +471,12 @@ class Registry:
         try:
             module_object = importlib.import_module(module)
         except Exception as error:
+            # Named by type as well as message: a bare ``assert`` raises an
+            # AssertionError carrying no message at all, and a report built from
+            # str(error) alone is empty exactly where it matters (SWE-15).
             raise SweetTeaError(
-                f"Cannot resolve {attribute} from {module}: {error}"
+                f"Cannot resolve {attribute} from {module}: "
+                f"{cls.__describe_exception(error)}"
             ) from error
 
         resolved = getattr(module_object, attribute, None)
@@ -491,6 +511,12 @@ class Registry:
         could predict, and minus provisional guesses that turned out not to be
         classes.
 
+        A module whose import raises is reported and its lazy entries dropped, the
+        way the eager fill reports and skips it (see :meth:`__skip_module`), so the
+        lookup that triggered this sees the same registry an eager fill would have
+        built. It is popped from the pending index either way, so an import known to
+        fail is attempted once rather than once per lookup.
+
         The caller must hold ``__lock``.
 
         Args:
@@ -513,42 +539,41 @@ class Registry:
 
         try:
             module = importlib.import_module(module_name)
-        except (ImportError, ModuleNotFoundError):
-            # Same contract as the eager path: an optional dependency that is not
-            # installed removes the entry rather than failing the lookup.
-            warnings.warn(
-                f"Skipping module {module_name} due to missing optional dependency",
-                SweetTeaWarning,
-                stacklevel=2,
-            )
-            cls.__skipped[module_name] = "missing optional dependency"
+            # Collected inside the same protection the import gets, and for the same
+            # reason the eager path does it: attribute access runs the module's code
+            # too. It also keeps "all of this module or none of it" true.
+            found = [
+                (class_name, class_def)
+                for class_name, class_def in inspect.getmembers(module, inspect.isclass)
+                if class_def.__module__ == module_name
+                or cls.__is_orphaned(class_def, module_name)
+            ]
+        except Exception as error:
+            # Same contract as the eager path, whatever was raised: the module is
+            # reported and its entries removed rather than the lookup failing
+            # (SWE-15). Both modes therefore end up registering the same classes.
+            # The difference deferral cannot remove is *when* it is reported: the
+            # eager fill warns while walking the tree, this warns at the lookup that
+            # first needed the module.
+            #
+            # Dropped before reporting, not after: under
+            # warnings.simplefilter("error", SweetTeaWarning) the warning leaves
+            # through this frame, and entries pointing at a module now known to be
+            # unimportable must not be left behind for the next lookup to retry.
             cls.__drop_lazy_entries(module_name)
+            cls.__skip_module(module_name, error)
             return
-        except Exception:
-            # Anything else is reported the way __add_entry_to_registry reports it, so
-            # a module that breaks discovery fails the same way in both modes. The
-            # difference deferral cannot remove is *when*: eager raises during the
-            # fill, lazy during the lookup that first needed this module.
-            cls.__drop_lazy_entries(module_name)
-            error_message = traceback.format_exc()
-            cls.__logger.error(
-                f"Error processing module {module_name}: {error_message}"
-            )
-            raise SweetTeaError(error_message)
 
         cls.__drop_lazy_entries(module_name)
 
-        for class_name, class_def in inspect.getmembers(module, inspect.isclass):
-            if class_def.__module__ == module_name or cls.__is_orphaned(
-                class_def, module_name
-            ):
-                cls.register(
-                    key=class_name.lower(),
-                    class_def=class_def,
-                    library=library,
-                    label=label,
-                    attribute=class_name,
-                )
+        for class_name, class_def in found:
+            cls.register(
+                key=class_name.lower(),
+                class_def=class_def,
+                library=library,
+                label=label,
+                attribute=class_name,
+            )
 
     @classmethod
     def __drop_lazy_entries(cls, module_name: str) -> None:
@@ -614,9 +639,13 @@ class Registry:
         """
         Recursively scan and register classes from packages starting from the given path.
 
-        This method automatically discovers all classes in the package hierarchy,
-        supporting optional dependencies by gracefully skipping modules that fail
-        to import due to missing packages.
+        This method automatically discovers all classes in the package hierarchy. A
+        module whose import raises is warned about and skipped, whatever it raised —
+        an uninstalled optional dependency, a platform guard, a syntax error — and
+        the walk continues, so no single module can cost a package its registration.
+        :meth:`skipped` maps each such module to the exception behind it, and
+        escalating :class:`~sweet_tea.sweet_tea_warning.SweetTeaWarning` to an error
+        makes the first skip fail the fill for callers who want that.
 
         Both regular packages and implicit namespace packages (PEP 420) are traversed;
         no flag is needed to opt in to the latter. Directories that cannot be imported
@@ -1059,6 +1088,100 @@ class Registry:
 
         return False
 
+    @staticmethod
+    def __describe_exception(error: BaseException) -> str:
+        """
+        Name an exception the way a reader needs it: the type, and the message if any.
+
+        Reports built from ``str(error)`` alone go blank exactly where it matters.
+        ``click._winconsole`` opens with ``assert sys.platform == "win32"``, and a
+        bare ``assert`` raises an AssertionError carrying no message, so the type is
+        the only thing there is to say about the commonest case this reports.
+
+        Args:
+            error: The exception to describe.
+
+        Returns:
+            ``"Type: message"``, or ``"Type"`` when the exception carries no message.
+        """
+        message = str(error)
+        return f"{type(error).__name__}: {message}" if message else type(error).__name__
+
+    @classmethod
+    def __skip_module(cls, name_of_package: str, error: BaseException) -> None:
+        """
+        Report a module whose import failed and record why, instead of failing the fill.
+
+        Only ImportError and ModuleNotFoundError used to be survivable here, on the
+        reading that a failed import means "optional dependency not installed", and
+        anything else aborted the whole fill. But a module body runs arbitrary code
+        at import time, and the commonest reason it raises is not a bug: it is a
+        module that was never meant to be imported here. ``click._winconsole`` is the
+        case that found this — ``assert sys.platform == "win32"`` on line 35 — so
+        filling over an installed click on Linux raised SweetTeaError the moment the
+        walk reached it, abandoning every module after it. One platform-guarded
+        module made the package unregistrable (SWE-15).
+
+        Any exception is therefore survivable now, and what keeps a genuine bug
+        visible is the report rather than the abort: the warning names the module,
+        the exception type and its message, and :meth:`skipped` keeps the same string
+        for inspection afterwards. The reason is categorised so the install profile
+        of the machine stays distinguishable from everything else, which is the one
+        distinction the old two-branch handling got right.
+
+        No ``strict`` option accompanies this. The warning is a real
+        :class:`~sweet_tea.sweet_tea_warning.SweetTeaWarning`, so a caller who would
+        rather not continue already has ``warnings.simplefilter("error",
+        SweetTeaWarning)`` — the Python mechanism for exactly this choice, with no new
+        flag to keep consistent across the eager and lazy paths, where "at fill time"
+        means two different moments. Set it in code rather than with ``-W``: the
+        category there is resolved at interpreter start, before this package is
+        importable, and an unresolvable one is ignored with a notice rather than
+        honoured.
+
+        The traceback goes to the log at DEBUG for the non-dependency case — the one
+        piece of diagnosis a warning cannot carry, kept for whoever decides the skip
+        is a bug and comes looking. It used to be logged at ERROR, which made sense
+        while this also raised; printing a full traceback by default for a condition
+        the library has just decided to continue past only teaches readers to skip
+        past tracebacks. A caller who wants it unconditionally has the warnings
+        filter: raised from inside the ``except`` block, the escalated warning
+        chains onto the original exception, so the traceback comes out with it.
+
+        Args:
+            name_of_package: Full dotted path of the module that was skipped.
+            error: What its import raised.
+        """
+        detail = cls.__describe_exception(error)
+        if isinstance(error, ImportError):
+            # ModuleNotFoundError is an ImportError, so this covers both.
+            reason = f"missing optional dependency: {detail}"
+            advice = "Install the dependency, or exclude the module from the fill."
+        else:
+            reason = f"import failed: {detail}"
+            advice = (
+                "Nothing it defines is registered. If the module is meant to import "
+                "here, that exception is a bug rather than a platform or environment "
+                "guard."
+            )
+            # format_exc reads the exception currently being handled; both call
+            # sites report from inside their own except block.
+            cls.__logger.debug(
+                f"Error processing module {name_of_package}: {traceback.format_exc()}"
+            )
+
+        # Recorded before warning, so the record survives a caller who has turned
+        # SweetTeaWarning into an error and will never see the return.
+        cls.__skipped[name_of_package] = reason
+        # stacklevel=3: this helper's own callers are internal, so the warning points
+        # at whoever asked for the fill or the lookup, as it did when both paths
+        # warned inline.
+        warnings.warn(
+            f"Skipping module {name_of_package}: {reason}. {advice}",
+            SweetTeaWarning,
+            stacklevel=3,
+        )
+
     @classmethod
     def __add_entry_to_registry(
         cls, label: str, library: str, name_of_package: str
@@ -1066,8 +1189,20 @@ class Registry:
         """
         Import a module and register all classes defined in it.
 
-        Handles optional dependencies by issuing warnings for ImportError/ModuleNotFoundError
-        and continuing, while raising SweetTeaError for other exceptions.
+        A module whose import raises is warned about and skipped, whatever it raised,
+        so no single module can make its package unregistrable — see
+        :meth:`__skip_module` for why that trade is the right one and how a caller
+        gets the strict behaviour back.
+
+        Reading the module's members counts as the module's own code, so it is inside
+        the same protection: a module may answer attribute access with a PEP 562
+        ``__getattr__``, which can raise for the same reasons an import can. Classes
+        are collected before any of them is registered, so a module that fails is
+        skipped whole rather than leaving half its classes behind.
+
+        Registering what was collected is this library's own work, and a failure
+        there is a bug here rather than in the module being filled — it still aborts
+        with SweetTeaError, as it always has.
 
         Args:
             label: Optional label for categorizing classes.
@@ -1075,19 +1210,21 @@ class Registry:
             name_of_package: Full module name to import and scan.
 
         Raises:
-            SweetTeaError: For non-import related errors during module processing.
+            SweetTeaError: When registering the classes a module yielded fails.
         """
         try:
-            # exec("import " + name_of_package)
             module = importlib.import_module(name_of_package)
+            classes = [
+                (name, obj)
+                for name, obj in inspect.getmembers(module, inspect.isclass)
+                if obj.__module__ == name_of_package
+                or cls.__is_orphaned(obj, name_of_package)
+            ]
+        except Exception as error:
+            cls.__skip_module(name_of_package, error)
+            return
 
-            classes = []
-            for name, obj in inspect.getmembers(module, inspect.isclass):
-                if obj.__module__ == name_of_package or cls.__is_orphaned(
-                    obj, name_of_package
-                ):
-                    classes.append((name, obj))
-
+        try:
             for class_name, class_def in classes:
                 Registry.register(
                     key=class_name.lower(),
@@ -1096,18 +1233,7 @@ class Registry:
                     label=label,
                     attribute=class_name,
                 )
-
-        except (ImportError, ModuleNotFoundError):
-            # Optional dependency not installed - issue warning and skip this module
-            warnings.warn(
-                f"Skipping module {name_of_package} due to missing optional dependency",
-                SweetTeaWarning,
-                stacklevel=2,
-            )
-            cls.__skipped[name_of_package] = "missing optional dependency"
-            # Continue without registering this module
         except Exception:
-            # Other errors (e.g., syntax errors, runtime errors) should still fail
             error_message = traceback.format_exc()
             cls.__logger.error(
                 f"Error processing module {name_of_package}: {error_message}"
