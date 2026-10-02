@@ -1420,21 +1420,28 @@ vanish on resolution, and runtime-injected names are missing until something ask
 <code>Registry.resolve_all()</code> when you need an exact registry — it imports everything, which
 is by definition eager.</p>
 <h3 id="reading-the-registry-directly">Reading the registry directly</h3>
-<p><code>Registry.entries()</code> returns unresolved entries too, and an unresolved entry has
-<code>class_def is None</code> — it carries <code>module</code> and <code>attribute</code> instead. Code that reads
-<code>entry.class_def</code> straight off <code>entries()</code> therefore sees <code>None</code> where it used to see a
-class:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># breaks under lazy filling: class_def may be None</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span><span class="o">.</span><span class="n">class_def</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span> <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span><span class="p">]</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># resolves properly</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">klass</span> <span class="o">=</span> <span class="n">InverterFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># or, when you genuinely want the whole registry materialised</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">Registry</span><span class="o">.</span><span class="n">resolve_all</span><span class="p">()</span>
+<p><code>Registry.entries()</code> returns unresolved entries too, and reading <code>entry.class_def</code> on
+one imports its module and hands back the class — so code that introspects the registry
+keeps working:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># resolves only the entries this filter actually selected</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="n">entry</span><span class="o">.</span><span class="n">class_def</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">entry</span><span class="o">.</span><span class="n">library</span> <span class="o">==</span> <span class="s2">"mylib"</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="p">]</span>
 </span></code></pre></div>
-<p>Going through a factory always resolves first, so factory callers never see <code>None</code>.
-Use <code>entry.is_lazy</code> to tell the two apart when walking entries yourself.</p>
+<p>Because the filter runs first, only the matching entries' modules are imported. A loop
+that touches <code>class_def</code> on <em>every</em> entry is effectively an eager fill.</p>
+<p>Two things to know:</p>
+<ul>
+<li><strong>Reading an attribute can now raise.</strong> A module that fails to import, or a name the
+  scanner guessed at that turns out not to be a class, raises <code>SweetTeaError</code> on access.</li>
+<li><strong><code>entry.is_lazy</code> does not resolve.</strong> Use it to check whether a read would import
+  anything. <code>entry.class_object</code> exposes the stored class without resolving, for code
+  that wants to see unresolved entries as unresolved.</li>
+</ul>
+<p><code>Registry.resolve_all()</code> still materialises everything at once when that is what you
+want.</p>
 <h3 id="adopting-it">Adopting it</h3>
 <p>Lazy filling assumes nothing needs the registry to be complete <em>while modules are still
 importing</em>. A package that resolves classes through the registry at import time — in a
