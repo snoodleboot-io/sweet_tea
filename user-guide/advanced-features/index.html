@@ -1517,6 +1517,11 @@ that touches <code>class_def</code> on <em>every</em> entry is effectively an ea
 <li><strong><code>entry.is_lazy</code> does not resolve.</strong> Use it to check whether a read would import
   anything. <code>entry.class_object</code> exposes the stored class without resolving, for code
   that wants to see unresolved entries as unresolved.</li>
+<li><strong><code>entry.model_dump()</code> reports stored state.</strong> It names the class <code>class_def</code> — the
+  name entries are constructed with — and gives <code>None</code> for an unresolved entry rather
+  than importing to fill it in. Pass <code>by_alias=False</code> if you want the storage field
+  name instead. A dump of a resolved entry holds a live class, which no JSON encoder
+  accepts, so <code>Registry.export()</code> is the way to write the registry as data.</li>
 </ul>
 <p><code>Registry.resolve_all()</code> still materialises everything at once when that is what you
 want.</p>
