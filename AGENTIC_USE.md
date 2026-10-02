@@ -183,6 +183,13 @@ entries are lazy. On an 880-module package: fill 497 ms, load 49 ms, load with
 the recorded trees by default and raises `SweetTeaError` when they differ; only pass
 `verify=False` when something else guarantees freshness.
 
+Moving the tree is not a difference. Sources are recorded relative to their root package
+(format version 2) and located through `importlib.util.find_spec` on the top-level name,
+which executes nothing, so a snapshot built in CI and shipped inside the wheel verifies
+from the consumer's `site-packages`. Format 1 snapshots still load and are checked
+against the absolute export directory, as they always were; a reader that predates the
+field refuses a version 2 file rather than mis-judging it.
+
 `Registry.skipped()` reports the modules a fill could not import, each mapped to
 `<category>: <ExceptionType>[: <message>]`, where the category is
 `missing optional dependency` for an `ImportError` and `import failed` for anything

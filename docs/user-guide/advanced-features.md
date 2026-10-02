@@ -351,8 +351,18 @@ Loaded entries are lazy entries, so nothing is imported until a factory — or a
 A stale snapshot is worse than walking the tree: it registers names that no longer
 exist, and the failure surfaces far from the cause. So a snapshot records the trees it
 was built from with a digest over their Python sources, and `load` checks it by default.
-A changed, added or removed module, or a tree that has moved, raises `SweetTeaError`
+A changed, added or removed module, or a tree that is gone, raises `SweetTeaError`
 naming the source and telling you to rebuild.
+
+A tree that merely *moved* does not. Each source is recorded by where it sits inside its
+root package as well as by the absolute directory the export walked, and verification
+looks for it where that package is installed now. That is what makes the obvious build
+step work: export the snapshot in CI, ship it inside the wheel, and it still verifies
+from the consumer's `site-packages` rather than being refused for not being under
+`/home/runner/work/...`. Locating the package uses `importlib.util.find_spec` on the
+top-level name, which executes nothing — loading a snapshot never runs the code it
+describes. A package that cannot be located at all falls back to the recorded absolute
+directory, so an uninstalled tree is still checked exactly where it was built.
 
 Verification costs a hash of every source file — 41 ms of the 49 ms above. Pass
 `verify=False` where something else already guarantees the snapshot is current, such as
@@ -367,8 +377,9 @@ bytecode is derived.
 
 ```json
 {
-  "version": 1,
-  "sources": [{"module": "myapp", "path": "/srv/myapp", "digest": "..."}],
+  "version": 2,
+  "sources": [{"module": "myapp", "path": "/srv/myapp", "relative_path": ".",
+               "digest": "..."}],
   "entries": [{"key": "database_connection", "class_def": "myapp.db:DatabaseConnection",
                "library": "myapp", "label": ""}],
   "skipped": {"myapp.optional_backend":
@@ -378,6 +389,16 @@ bytecode is derived.
 
 `class_def` is `module:attribute` — the attribute the class is *bound to*, which is how
 the registry keys it and is not always the class's own `__name__`.
+
+`path` is where the tree sat when the snapshot was written; `relative_path` is the same
+directory relative to its root package's own directory — `"."` when the filled module
+*is* the root, `"sub"` when `myapp.sub` was filled. Verification prefers the relative
+one, which is why a shipped snapshot still works.
+
+`version` is 2 because of that field. Format 1 snapshots still load — no relative record
+means "check the absolute path", the old behaviour — but a sweet_tea old enough to not
+know the field refuses a format 2 file outright rather than ignoring it and reaching the
+wrong verdict about a relocated tree. Re-export after upgrading to gain relocatability.
 
 Skips are recorded on purpose. Filling warns and skips a module whose import raises; a
 snapshot that dropped that would bake in the install profile *and the platform* of the
