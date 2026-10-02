@@ -24,7 +24,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from sweet_tea.audit_finding import AuditFinding
 from sweet_tea.entry import Entry
+from sweet_tea.lazy_audit import LazyAudit
 from sweet_tea.lazy_scanner import LazyScanner
 from sweet_tea.sweet_tea_error import SweetTeaError
 from sweet_tea.sweet_tea_warning import SweetTeaWarning
@@ -393,7 +395,7 @@ class Registry:
         label: str = "",
         exclude: Iterable[str] | None = None,
         lazy: bool | str = False,
-        eager: Iterable[str] | None = None,
+        eager: Iterable[str] | str | None = None,
     ) -> None:
         """
         Recursively scan and register classes from packages starting from the given path.
@@ -434,6 +436,9 @@ class Registry:
             eager: Glob patterns, matched like ``exclude``, naming modules to import at
                 fill time despite ``lazy``. Use for modules that build classes at
                 runtime or register during import. Only meaningful with ``lazy``.
+                The reserved value ``"auto"`` — alone, or among the patterns — audits
+                each module and imports the ones that would not survive lazy filling
+                (see :meth:`lazy_audit`), leaving the rest lazy.
 
         Raises:
             SweetTeaError: When ``eager`` is given without ``lazy``, which would
@@ -472,7 +477,15 @@ class Registry:
             # than re-consuming a caller-supplied iterator, which would be exhausted
             # after the first subpackage.
             exclude_patterns = tuple(exclude or ())
-            eager_patterns = tuple(eager or ())
+            # "auto" is a mode rather than a glob, so it is separated from the
+            # patterns before matching and re-attached for the recursive call.
+            eager_values: tuple[str, ...] = (
+                (eager,) if isinstance(eager, str) else tuple(eager or ())
+            )
+            auto_eager = "auto" in eager_values
+            eager_patterns = tuple(
+                pattern for pattern in eager_values if pattern != "auto"
+            )
 
             # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
             # module imports the module and registers it.
@@ -490,11 +503,22 @@ class Registry:
                     source_file = os.path.join(pkg_dir, f"{name}.py")
                     # An eager pattern, a non-Python module (C extension), or no lazy
                     # request at all all mean: import it now, as before.
-                    if (
-                        lazy
+                    fill_lazily = (
+                        bool(lazy)
                         and not cls.__is_excluded(pkg_name, eager_patterns)
                         and os.path.isfile(source_file)
-                    ):
+                    )
+                    if fill_lazily and auto_eager:
+                        findings = LazyAudit.audit_file(source_file, pkg_name)
+                        if findings:
+                            # Logged rather than warned: this is the mode working as
+                            # asked, not a problem the caller must act on.
+                            cls.__logger.debug(
+                                f"Filling {pkg_name} eagerly: {findings[0]}"
+                            )
+                            fill_lazily = False
+                            cls.__warn_if_unfixable(findings)
+                    if fill_lazily:
                         cls.__scan_entry_to_registry(
                             label=label,
                             library=library,
@@ -514,8 +538,112 @@ class Registry:
                         label=label,
                         exclude=exclude_patterns,
                         lazy=lazy,
-                        eager=eager_patterns if lazy else None,
+                        eager=eager_values if lazy else None,
                     )
+
+    @classmethod
+    def __warn_if_unfixable(cls, findings: list[AuditFinding]) -> None:
+        """
+        Warn about a module importing eagerly cannot rescue.
+
+        Importing a module early is enough for one that *writes* to the registry or
+        builds classes at runtime: running it makes its names real. It is not enough
+        for one that *reads* the registry while importing, because the read happens
+        while the rest of the tree is still unresolved — so the lookup either misses
+        or forces the very sweep lazy filling exists to avoid. Only changing that
+        module helps, which is worth saying plainly rather than leaving the caller to
+        infer it from a sweep warning later.
+
+        Args:
+            findings: The findings for one module.
+        """
+        blocking = [
+            finding for finding in findings if finding.kind == "registry-read-at-import"
+        ]
+        if not blocking:
+            return
+
+        warnings.warn(
+            f"{blocking[0].module} reads the registry while it is being imported "
+            f"(line {blocking[0].line}). Filling it eagerly does not fix that: the "
+            f"lookup still runs before the rest of the tree is resolved. Defer the "
+            f"lookup to first use, or fill this package eagerly.",
+            SweetTeaWarning,
+            stacklevel=2,
+        )
+
+    @classmethod
+    def lazy_audit(
+        cls,
+        path: str | None = None,
+        module: str | None = None,
+        exclude: Iterable[str] | None = None,
+    ) -> list[AuditFinding]:
+        """
+        Report what in a package would not survive ``fill_registry(lazy=True)``.
+
+        Walks the tree the way :meth:`fill_registry` does but imports nothing, and
+        reports the three habits that assume eager filling: reading the registry while
+        importing, registering while importing, and creating classes at runtime where
+        no scan can see them (see :class:`~sweet_tea.lazy_audit.LazyAudit`).
+
+        Read the report before turning ``lazy`` on, or pass ``eager="auto"`` to act on
+        it automatically.
+
+        Args:
+            path: Package path to walk. If None, uses the caller's module path, the
+                same default :meth:`fill_registry` applies.
+            module: Name of the root module. If None, inferred from path.
+            exclude: Glob patterns for modules to skip, matched as in
+                :meth:`fill_registry`.
+
+        Returns:
+            Findings from every module walked, grouped by module in walk order.
+
+        Raises:
+            SweetTeaError: When no path is given and the caller's module cannot be
+                determined.
+        """
+        if path is None:
+            caller = inspect.getmodule(inspect.stack()[1][0])
+            if caller is None or caller.__file__ is None:
+                raise SweetTeaError("Cannot determine module path automatically")
+            path = str(Path(caller.__file__).parent)
+
+        path_str = str(path)
+        if module is None:
+            module = os.path.basename(path_str)
+
+        exclude_patterns = tuple(exclude or ())
+        findings: list[AuditFinding] = []
+
+        # Filling never scans a package's __init__ — packages are descended into, not
+        # registered from — but importing the package always runs it, so it is the
+        # most likely place for work that assumes an already-populated registry.
+        package_init = os.path.join(path_str, "__init__.py")
+        if os.path.isfile(package_init):
+            findings.extend(LazyAudit.audit_file(package_init, module))
+
+        for name, is_a_package in cls.__iter_package_children(path_str):
+            child = f"{module}.{name}"
+            if cls.__is_excluded(child, exclude_patterns):
+                continue
+
+            if is_a_package:
+                findings.extend(
+                    cls.lazy_audit(
+                        path=os.path.join(path_str, name),
+                        module=child,
+                        exclude=exclude_patterns,
+                    )
+                )
+                continue
+
+            source_file = os.path.join(path_str, f"{name}.py")
+            if os.path.isfile(source_file):
+                findings.extend(LazyAudit.audit_file(source_file, child))
+
+        return findings
 
     @classmethod
     def __scan_entry_to_registry(
