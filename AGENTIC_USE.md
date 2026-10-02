@@ -183,8 +183,11 @@ entries are lazy. On an 880-module package: fill 497 ms, load 49 ms, load with
 the recorded trees by default and raises `SweetTeaError` when they differ; only pass
 `verify=False` when something else guarantees freshness.
 
-`Registry.skipped()` reports modules whose optional dependency was missing — a snapshot
-carries those, so "not registered" stays distinguishable from "not installed".
+`Registry.skipped()` reports the modules a fill could not import, each mapped to
+`<category>: <ExceptionType>[: <message>]`, where the category is
+`missing optional dependency` for an `ImportError` and `import failed` for anything
+else. A snapshot carries them, so "not registered" stays distinguishable from "not
+installed" and from "does not import on this machine".
 
 ### Type-constrained factory
 
@@ -269,10 +272,17 @@ the exact variation matches first. When a returned object surprises you, check
 - **`fill_registry` imports every module it finds**: import-time side effects —
   connections, `logging.basicConfig`, monkeypatching — all execute during
   discovery. Use `exclude` to keep such modules out.
-- **`fill_registry` swallows missing dependencies**: an `ImportError` or
-  `ModuleNotFoundError` emits a `SweetTeaWarning` and skips that module. Any
-  other exception raises `SweetTeaError`. If classes are missing after
-  discovery, check for warnings before suspecting the registry.
+- **`fill_registry` skips any module whose import raises**: whatever it raised —
+  `ModuleNotFoundError`, a platform guard's `AssertionError`, a `SyntaxError` —
+  it emits a `SweetTeaWarning` naming the module, the exception type and its
+  message, records the same string in `Registry.skipped()`, and carries on with
+  the rest of the tree. Nothing from that module is registered. So if classes
+  are missing after discovery, read the warnings or `Registry.skipped()` before
+  suspecting the registry; a fill that registers less than you expect no longer
+  fails loudly. To make it fail, escalate the warning:
+  `warnings.simplefilter("error", SweetTeaWarning)`. The lazy path does the same
+  at the lookup that first needed the module, which is also when the warning
+  appears; `Entry.class_def` on such a module still raises `SweetTeaError`.
 - **`exclude` patterns match the full dotted path, case-sensitively**:
   `exclude=["*.tests"]` — a bare `"tests"` matches nothing, because the value
   tested is `mypkg.sub.tests`. Excluding a package prunes its whole subtree.

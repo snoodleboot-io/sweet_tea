@@ -31,6 +31,7 @@ def reset_registry() -> None:
     Registry._Registry__lookup.clear()
     Registry._Registry__lookup_keys.clear()
     Registry._Registry__unresolved.clear()
+    Registry._Registry__skipped.clear()
     Registry._Registry__no_sweep = False
 
 
@@ -280,7 +281,7 @@ class TestLazySweep(TestCase):
 
 
 class TestLazyImportFailures(TestCase):
-    """A module that raises on import fails the same way in both modes."""
+    """A module that raises on import is skipped the same way in both modes (SWE-15)."""
 
     BROKEN_PATH = os.path.join(os.path.dirname(__file__), "lazy_broken")
     BROKEN_MODULE = "tests.lazy_broken"
@@ -291,21 +292,30 @@ class TestLazyImportFailures(TestCase):
     def tearDown(self):
         reset_registry()
 
-    def test_eager_fill_raises(self):
-        """Today's behaviour: a non-import exception aborts the fill."""
-        with self.assertRaises(SweetTeaError):
+    def test_eager_fill_registers_the_rest_of_the_package(self):
+        """A module raising AssertionError costs its own classes and no others."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SweetTeaWarning)
             Registry.fill_registry(path=self.BROKEN_PATH, module=self.BROKEN_MODULE)
 
-    def test_lazy_resolution_raises_the_same_error_type(self):
-        """Deferral moves when the failure surfaces, not what it is."""
+        self.assertIn("reachable", keys_now())
+        self.assertNotIn("unreachable", keys_now())
+
+    def test_lazy_lookup_reports_rather_than_raising(self):
+        """Deferral moves when the module is reported, not what the fill ends up with."""
         Registry.fill_registry(
             path=self.BROKEN_PATH, module=self.BROKEN_MODULE, lazy=True
         )
 
-        with self.assertRaises(SweetTeaError) as raised:
-            Factory.create("unreachable")
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", SweetTeaWarning)
+            with self.assertRaises(SweetTeaError) as raised:
+                Factory.create("unreachable")
 
-        self.assertIn("AssertionError", str(raised.exception))
+        # The key is gone with its module, so the factory reports a missing key —
+        # the same answer it gives for a missing optional dependency.
+        self.assertIn("unreachable", str(raised.exception))
+        self.assertTrue(any("AssertionError" in str(w.message) for w in caught))
 
 
 class TestLazyEntryIntrospection(TestCase):
