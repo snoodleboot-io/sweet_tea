@@ -819,6 +819,56 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#snapshotting-the-registry" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Snapshotting the Registry
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Snapshotting the Registry">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#staleness" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Staleness
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-a-snapshot-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a snapshot records
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#determinism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Determinism
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1448,6 +1498,73 @@ importing</em>. A package that resolves classes through the registry at import t
 module body, or in a function a module body calls — will fail under <code>lazy=True</code>, because
 the entries it wants have not been resolved yet. Put such modules in <code>eager=[...]</code>, or
 defer their lookups to first use.</p>
+<h2 id="snapshotting-the-registry">Snapshotting the Registry</h2>
+<p>Filling a registry walks a package tree. Lazy filling skips the imports but still reads
+every source file. A snapshot skips both — write the filled registry once, read it back
+as data:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>      <span class="c1"># build step</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>        <span class="c1"># every run after</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>
+</span></code></pre></div>
+<p>Measured on an 880-module package, all producing the same 799 entries:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>time</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fill_registry(lazy=True)</code></td>
+<td>497 ms</td>
+</tr>
+<tr>
+<td><code>load("registry.json")</code></td>
+<td><strong>49 ms</strong></td>
+</tr>
+<tr>
+<td><code>load("registry.json", verify=False)</code></td>
+<td><strong>8 ms</strong></td>
+</tr>
+</tbody>
+</table>
+<p>Loaded entries are lazy entries, so nothing is imported until a factory — or a read of
+<code>entry.class_def</code> — needs it.</p>
+<h3 id="staleness">Staleness</h3>
+<p>A stale snapshot is worse than walking the tree: it registers names that no longer
+exist, and the failure surfaces far from the cause. So a snapshot records the trees it
+was built from with a digest over their Python sources, and <code>load</code> checks it by default.
+A changed, added or removed module, or a tree that has moved, raises <code>SweetTeaError</code>
+naming the source and telling you to rebuild.</p>
+<p>Verification costs a hash of every source file — 41 ms of the 49 ms above. Pass
+<code>verify=False</code> where something else already guarantees the snapshot is current, such as
+a build that regenerates it.</p>
+<p>The digest covers excluded modules too. A snapshot cannot know which <code>exclude</code> patterns
+a later fill would pass, so it is deliberately conservative: editing a file that was
+never registered still marks the snapshot stale. <code>__pycache__</code> is ignored, since
+bytecode is derived.</p>
+<h3 id="what-a-snapshot-records">What a snapshot records</h3>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="p">{</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">}],</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span><span class="w"> </span><span class="s2">"missing optional dependency"</span><span class="p">}</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><code>class_def</code> is <code>module:attribute</code> — the attribute the class is <em>bound to</em>, which is how
+the registry keys it and is not always the class's own <code>__name__</code>.</p>
+<p>Skips are recorded on purpose. Filling warns and skips a module whose import fails
+because an optional dependency is missing; a snapshot that dropped that would bake in
+the install profile of the machine that built it, and a reader could not tell "not
+registered" from "not installed". <code>Registry.skipped()</code> reports them either way.</p>
+<h3 id="determinism">Determinism</h3>
+<p>Because a snapshot is read rather than discovered, its contents do not depend on what
+happens to be imported when it is read. Registry membership from a live fill can vary
+with interpreter state; a loaded registry cannot.</p>
 
 
 
