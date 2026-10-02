@@ -63,14 +63,11 @@ class AbstractInverterFactory(TypeParameterizedFactory, Generic[T], InverterFact
         Raises:
             SweetTeaError: When the key is not found or filters don't match.
         """
-        # Find all entries that have the specified key value and match the generic type
-        entries = []
-        key_variations = cls._generate_key_variations(key)
+        # Resolve before filtering by type, for the reason given in AbstractFactory:
+        # a lazy entry cannot answer issubclass until its module is imported.
+        cls._resolve_for(key)
         typed_entries = cls._registry.typed_entries(lookup_type=cls._get_generic_type())
 
-        for variation in key_variations:
-            entries.extend([entry for entry in typed_entries if entry.key == variation])
-            if entries:  # Found entries with this variation
-                break
-
-        return cls._create_from_entries(entries, key, library, label)
+        return cls._create_from_entries(
+            cls._find_entries(key, candidates=typed_entries), key, library, label
+        )

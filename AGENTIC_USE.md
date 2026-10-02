@@ -137,6 +137,20 @@ class CacheClient:
 # Factory.create(key="CacheClient", configuration={"timeout": 30}) -> CacheClient
 ```
 
+### Lazy filling
+
+**Contract:** `Registry.fill_registry(lazy=True)` registers the same keys by parsing
+each module instead of importing it, and imports a module the first time a factory
+needs a class from it. A resolved module matches eager registration exactly.
+
+**Must not:** assume the registry is complete during import. Code that calls
+`Factory.create` or reads `Registry.entries()` from a module body fails under lazy
+filling; name those modules in `eager=[...]`, or defer the lookup.
+
+Classes created at runtime (`globals()[name] = type(...)`) cannot be seen in source.
+Requesting one imports every module still pending and warns; `lazy="strict"` raises
+instead. `eager` without `lazy` raises `SweetTeaError`.
+
 ### Type-constrained factory
 
 **Contract:** subscript with the base class the results must inherit from:

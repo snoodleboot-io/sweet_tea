@@ -64,10 +64,21 @@ def setup_method(self):
     Registry._Registry__lookup_keys.clear()
 ```
 
-Clearing these three is still the whole recipe. `Registry` also keeps a hash index of
-registered entries (`__seen`) so duplicate detection does not scan the list, but it
-notices that the registry was cleared underneath it and rebuilds itself on the next
-`register` call.
+Clearing these three is still the whole recipe for an eagerly filled registry.
+`Registry` also keeps a hash index of registered entries (`__seen`) so duplicate
+detection does not scan the list, but it notices that the registry was cleared
+underneath it and rebuilds itself on the next `register` call.
+
+If a test uses `fill_registry(lazy=True)`, clear two more:
+
+```python
+    Registry._Registry__unresolved.clear()   # modules still pending import
+    Registry._Registry__no_sweep = False     # set by lazy="strict"
+```
+
+Leaving `__unresolved` populated is not unsafe — a module whose entries have been
+cleared is dropped rather than re-imported — but `lazy="strict"` is sticky, so a later
+test that expects a fallback sweep would see it refused instead.
 
 ### Factory Testing
 ```python

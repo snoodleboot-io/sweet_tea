@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from sweet_tea.entry import Entry
+from sweet_tea.lazy_scanner import LazyScanner
 from sweet_tea.sweet_tea_error import SweetTeaError
 from sweet_tea.sweet_tea_warning import SweetTeaWarning
 
@@ -56,7 +57,19 @@ class Registry:
     # element, so filling a registry of n entries cost n(n-1)/2 of them (SWE-6). The
     # tuple holds exactly the four fields Entry.__eq__ compares, so which registrations
     # count as duplicates is unchanged.
-    __seen: set[tuple[str, type, str, str]] = set()
+    __seen: set[tuple[str, object, str, str]] = set()
+
+    # Modules registered lazily whose import is still pending, mapped to the
+    # (library, label) the fill used — so the reconcile after import can re-register
+    # under the same categorisation — and the number of entries the scan contributed.
+    # A module the scanner found nothing in is still listed, with a count of zero:
+    # it may define classes the scan cannot see, and the fallback sweep can only
+    # import modules it knows about.
+    __unresolved: dict[str, tuple[str, str, int]] = {}
+
+    # Set when any subtree was filled with lazy="strict": a key that no static scan
+    # could see then raises instead of triggering a whole-tree sweep.
+    __no_sweep: bool = False
 
     __lookup: dict[Any, list[Entry]] = {}
 
@@ -92,7 +105,12 @@ class Registry:
                     cls.__lookup[lookup_type] = [
                         filtered_type
                         for filtered_type in cls.__registry
-                        if issubclass(filtered_type.class_def, lookup_type)
+                        # A lazy entry's class is unknown until its module is
+                        # imported, so it cannot answer issubclass. Factories call
+                        # ensure_resolved before reaching here, which turns every
+                        # candidate for the requested key into a normal entry.
+                        if filtered_type.class_def is not None
+                        and issubclass(filtered_type.class_def, lookup_type)
                     ]
             return cls.__lookup[lookup_type].copy()
 
@@ -118,12 +136,7 @@ class Registry:
 
         # key/library/label are lowercased above, so this compares the same normalised
         # values Entry.__eq__ would; class_def is a type and therefore hashable.
-        dedupe_key = (
-            new_entry.key,
-            new_entry.class_def,
-            new_entry.library,
-            new_entry.label,
-        )
+        dedupe_key = new_entry.identity
 
         with cls.__lock:
             cls.__resync_seen()
@@ -141,6 +154,211 @@ class Registry:
                         class_def, lookup_type
                     ):
                         cls.__lookup[lookup_type].append(new_entry)
+
+    @classmethod
+    def register_lazy(
+        cls,
+        key: str,
+        module: str,
+        attribute: str,
+        library: str = "",
+        label: str = "",
+    ) -> None:
+        """
+        Register a class by name, deferring its module's import until first use.
+
+        The entry carries no class object. The module is imported, and the entry
+        replaced with whatever eager registration would have produced, the first time
+        a factory needs this key (see :meth:`ensure_resolved`).
+
+        Args:
+            key: Name used to reference the class for instantiation.
+            module: Dotted path of the module that defines it.
+            attribute: Module attribute the class is bound to.
+            library: Name of the library the class belongs to.
+            label: Optional label for categorizing classes.
+        """
+        new_entry = Entry(
+            key=key.lower(),
+            module=module,
+            attribute=attribute,
+            library=library.lower(),
+            label=label.lower(),
+        )
+
+        with cls.__lock:
+            cls.__resync_seen()
+            if new_entry.identity not in cls.__seen:
+                cls.__seen.add(new_entry.identity)
+                cls.__registry.append(new_entry)
+                # Deliberately not added to any __lookup slot: the entry cannot answer
+                # issubclass until it is resolved.
+                known_library, known_label, count = cls.__unresolved.get(
+                    module, (library.lower(), label.lower(), 0)
+                )
+                cls.__unresolved[module] = (known_library, known_label, count + 1)
+
+    @classmethod
+    def ensure_resolved(cls, keys: Iterable[str], sweep: bool = True) -> None:
+        """
+        Import whatever is needed before the given keys can be looked up.
+
+        Resolves only the modules holding lazy entries for these keys — the whole
+        point of lazy filling. When no entry matches at all and modules remain
+        unresolved, falls back to resolving everything: a class injected at runtime
+        (``globals()[name] = type(...)``) or registered by a module's import-time side
+        effects is invisible to the scanner, and a sweep is the only way to find it.
+
+        Args:
+            keys: Candidate key spellings, already normalised by the caller.
+            sweep: Whether a total miss may trigger the fallback sweep.
+
+        Raises:
+            SweetTeaError: When a sweep is needed but the registry was filled with
+                lazy="strict".
+        """
+        with cls.__lock:
+            if not cls.__unresolved:
+                return
+
+            wanted = {key.lower() for key in keys}
+            pending = {
+                entry.module
+                for entry in cls.__registry
+                if entry.is_lazy and entry.key in wanted
+            }
+            for module_name in sorted(pending):
+                cls.__resolve_module(module_name)
+
+            if not sweep or not cls.__unresolved:
+                return
+            if any(entry.key in wanted for entry in cls.__registry):
+                return
+
+            requested = ", ".join(sorted(wanted))
+            if cls.__no_sweep:
+                raise SweetTeaError(
+                    f"No entry for {requested} and the registry was filled with "
+                    f'lazy="strict", so the remaining {len(cls.__unresolved)} module(s) '
+                    f"will not be imported to look for it. Name the module that "
+                    f"defines it in fill_registry(eager=[...]) if it is created at "
+                    f"runtime rather than by a class statement."
+                )
+
+            # Reported, not silent: a sweep undoes the saving lazy filling exists for,
+            # so the caller needs to know which key caused it.
+            warnings.warn(
+                f"Importing {len(cls.__unresolved)} remaining module(s) to look for "
+                f"{requested}: no lazily registered name matched. Add the defining "
+                f"module to fill_registry(eager=[...]) to avoid this.",
+                SweetTeaWarning,
+                stacklevel=2,
+            )
+            cls.resolve_all()
+
+    @classmethod
+    def resolve_all(cls) -> None:
+        """
+        Import every module still pending, leaving the registry fully eager.
+
+        Use when an exact view of the registry matters more than the deferral — for
+        example before reading :meth:`entries` for introspection.
+        """
+        with cls.__lock:
+            for module_name in sorted(cls.__unresolved):
+                cls.__resolve_module(module_name)
+
+    @classmethod
+    def __resolve_module(cls, module_name: str) -> None:
+        """
+        Import one pending module and replace its lazy entries with real ones.
+
+        Reconciliation runs eager registration's own discovery over the imported
+        module rather than trusting the scan, so the outcome for a resolved module is
+        exactly what a non-lazy fill would have produced — including names no scan
+        could predict, and minus provisional guesses that turned out not to be
+        classes.
+
+        The caller must hold ``__lock``.
+
+        Args:
+            module_name: Dotted path of the module to import.
+        """
+        if module_name not in cls.__unresolved:
+            return
+
+        library, label, scanned = cls.__unresolved.pop(module_name)
+
+        # The documented reset clears __registry directly, which can leave this index
+        # holding modules whose entries are gone. Importing them would resurrect
+        # registrations the caller just cleared. A module that contributed nothing to
+        # begin with (scanned == 0) is exempt: it has no entries to have lost, and is
+        # exactly the case the sweep exists for.
+        if scanned and not any(
+            entry.is_lazy and entry.module == module_name for entry in cls.__registry
+        ):
+            return
+
+        try:
+            module = importlib.import_module(module_name)
+        except (ImportError, ModuleNotFoundError):
+            # Same contract as the eager path: an optional dependency that is not
+            # installed removes the entry rather than failing the lookup.
+            warnings.warn(
+                f"Skipping module {module_name} due to missing optional dependency",
+                SweetTeaWarning,
+                stacklevel=2,
+            )
+            cls.__drop_lazy_entries(module_name)
+            return
+        except Exception:
+            # Anything else is reported the way __add_entry_to_registry reports it, so
+            # a module that breaks discovery fails the same way in both modes. The
+            # difference deferral cannot remove is *when*: eager raises during the
+            # fill, lazy during the lookup that first needed this module.
+            cls.__drop_lazy_entries(module_name)
+            error_message = traceback.format_exc()
+            cls.__logger.error(
+                f"Error processing module {module_name}: {error_message}"
+            )
+            raise SweetTeaError(error_message)
+
+        cls.__drop_lazy_entries(module_name)
+
+        for class_name, class_def in inspect.getmembers(module, inspect.isclass):
+            if class_def.__module__ == module_name:
+                cls.register(
+                    key=class_name.lower(),
+                    class_def=class_def,
+                    library=library,
+                    label=label,
+                )
+
+    @classmethod
+    def __drop_lazy_entries(cls, module_name: str) -> None:
+        """
+        Remove the unresolved entries belonging to one module.
+
+        Dropping entries is what makes ``__lookup`` invalidation necessary: its slots
+        are refreshed when entries are added but have no notion of removal, so a
+        cached slot would keep reporting a class that is no longer registered. The
+        slots are cleared wholesale and rebuilt on the next :meth:`typed_entries`
+        call; ``__seen`` recovers through :meth:`__resync_seen`.
+
+        The caller must hold ``__lock``.
+
+        Args:
+            module_name: Module whose lazy entries should go.
+        """
+        remaining = [
+            entry
+            for entry in cls.__registry
+            if not (entry.is_lazy and entry.module == module_name)
+        ]
+        if len(remaining) != len(cls.__registry):
+            cls.__registry[:] = remaining
+            cls.__lookup.clear()
+            cls.__lookup_keys.clear()
 
     @classmethod
     def __resync_seen(cls) -> None:
@@ -164,10 +382,7 @@ class Registry:
             # Mutated in place rather than rebound, so any existing reference to the set
             # keeps seeing the live index.
             cls.__seen.clear()
-            cls.__seen.update(
-                (entry.key, entry.class_def, entry.library, entry.label)
-                for entry in cls.__registry
-            )
+            cls.__seen.update(entry.identity for entry in cls.__registry)
 
     @classmethod
     def fill_registry(
@@ -177,6 +392,8 @@ class Registry:
         library: str = "",
         label: str = "",
         exclude: Iterable[str] | None = None,
+        lazy: bool | str = False,
+        eager: Iterable[str] | None = None,
     ) -> None:
         """
         Recursively scan and register classes from packages starting from the given path.
@@ -209,7 +426,27 @@ class Registry:
                 module path (``mypkg.sub.tests``). Matching modules are not imported and
                 matching packages are not descended into. Applies to regular and
                 namespace packages alike.
+            lazy: When truthy, register names found by parsing each module instead of
+                importing it; a module is imported the first time a factory needs a
+                class from it. Pass ``"strict"`` to additionally refuse the fallback
+                sweep, so a name no scan could see raises instead of importing the
+                rest of the tree.
+            eager: Glob patterns, matched like ``exclude``, naming modules to import at
+                fill time despite ``lazy``. Use for modules that build classes at
+                runtime or register during import. Only meaningful with ``lazy``.
+
+        Raises:
+            SweetTeaError: When ``eager`` is given without ``lazy``, which would
+                otherwise silently do nothing.
         """
+        if eager is not None and not lazy:
+            raise SweetTeaError(
+                "fill_registry(eager=...) only applies when lazy filling is on. "
+                "Pass lazy=True, or drop eager: without it every module is imported "
+                "at fill time already."
+            )
+        if lazy == "strict":
+            cls.__no_sweep = True
         with cls.__lock:
             # Determine the path to scan
             if path is None:
@@ -235,6 +472,7 @@ class Registry:
             # than re-consuming a caller-supplied iterator, which would be exhausted
             # after the first subpackage.
             exclude_patterns = tuple(exclude or ())
+            eager_patterns = tuple(eager or ())
 
             # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
             # module imports the module and registers it.
@@ -249,9 +487,24 @@ class Registry:
                     continue
 
                 if not is_a_package:
-                    cls.__add_entry_to_registry(
-                        label=label, library=library, name_of_package=pkg_name
-                    )
+                    source_file = os.path.join(pkg_dir, f"{name}.py")
+                    # An eager pattern, a non-Python module (C extension), or no lazy
+                    # request at all all mean: import it now, as before.
+                    if (
+                        lazy
+                        and not cls.__is_excluded(pkg_name, eager_patterns)
+                        and os.path.isfile(source_file)
+                    ):
+                        cls.__scan_entry_to_registry(
+                            label=label,
+                            library=library,
+                            name_of_package=pkg_name,
+                            source_file=source_file,
+                        )
+                    else:
+                        cls.__add_entry_to_registry(
+                            label=label, library=library, name_of_package=pkg_name
+                        )
                 else:
                     # Make recursive call to the
                     cls.fill_registry(
@@ -260,7 +513,48 @@ class Registry:
                         library=library,
                         label=label,
                         exclude=exclude_patterns,
+                        lazy=lazy,
+                        eager=eager_patterns if lazy else None,
                     )
+
+    @classmethod
+    def __scan_entry_to_registry(
+        cls, label: str, library: str, name_of_package: str, source_file: str
+    ) -> None:
+        """
+        Register a module's classes by name, without importing it.
+
+        The scanner reports the module-level bindings that eager registration would
+        have registered, keyed the same way — on the attribute name rather than the
+        class's ``__name__``. Names it cannot see, and guesses that turn out not to be
+        classes, are corrected when the module is actually imported.
+
+        Args:
+            label: Optional label for categorizing classes.
+            library: Name of the library the classes belong to.
+            name_of_package: Full dotted module name.
+            source_file: Path to the module's source.
+
+        Raises:
+            SweetTeaError: When the source cannot be read or parsed. The eager path
+                fails on such a module too, by way of the import.
+        """
+        for attribute in LazyScanner.scan_file(source_file):
+            cls.register_lazy(
+                key=attribute.lower(),
+                module=name_of_package,
+                attribute=attribute,
+                library=library,
+                label=label,
+            )
+
+        with cls.__lock:
+            # Recorded even when the scan found nothing: classes injected at runtime
+            # leave no trace in the source, and the sweep can only reach a module it
+            # has been told about.
+            cls.__unresolved.setdefault(
+                name_of_package, (library.lower(), label.lower(), 0)
+            )
 
     @classmethod
     def __is_excluded(cls, dotted_name: str, patterns: tuple[str, ...]) -> bool:

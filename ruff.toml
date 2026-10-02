@@ -11,3 +11,11 @@ lines-after-imports = 2
 known-first-party = ["sweet_tea"]
 order-by-type = true
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[lint.per-file-ignores]
+# Fixtures for lazy registration (SWE-10). Each module is deliberately written in a
+# shape that defeats or stresses static discovery — unused and re-exported imports,
+# a name redefined, imports below code, a dependency that is not installed. Linting
+# them away would delete the cases under test, and CI runs `ruff check . --fix`.
+"tests/lazy_cases/*" = ["E402", "F401", "F811", "I001"]
+"tests/lazy_broken/*" = ["I001"]
