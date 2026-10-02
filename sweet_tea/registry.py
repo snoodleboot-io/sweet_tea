@@ -539,7 +539,9 @@ class Registry:
         cls.__drop_lazy_entries(module_name)
 
         for class_name, class_def in inspect.getmembers(module, inspect.isclass):
-            if class_def.__module__ == module_name:
+            if class_def.__module__ == module_name or cls.__is_orphaned(
+                class_def, module_name
+            ):
                 cls.register(
                     key=class_name.lower(),
                     class_def=class_def,
@@ -908,6 +910,62 @@ class Registry:
             )
 
     @classmethod
+    def __is_orphaned(cls, class_def: type, name_of_package: str) -> bool:
+        """
+        Whether a class was built by a helper in this package and belongs nowhere.
+
+        Discovery registers the classes a module defines, judged by ``__module__``.
+        That filter is what stops an imported class being registered again under every
+        module that imports it — but it also drops a class built by a helper living
+        somewhere else:
+
+        .. code-block:: python
+
+            # pkg/helpers.py
+            def make_class(name):
+                return type(name, (), {})
+
+            # pkg/models.py
+            Thing = make_class("Thing")
+
+        ``type()`` stamps ``__module__`` from the calling frame, so ``Thing`` claims
+        ``pkg.helpers`` — which does not hold it either, since it was never bound
+        there. Before SWE-11 such a class was registered by nothing at all.
+
+        An orphan is exactly that case: its home module does not have it under its own
+        name. An ordinary imported class is not an orphan, because its home module does
+        hold it, so this does not widen discovery to re-register imports.
+
+        The home module must also sit inside the package being filled. Without that,
+        C-implemented types caught this: ``types.MappingProxyType`` claims ``builtins``
+        as its home and is named ``mappingproxy`` there, so ``builtins`` does not bind
+        it under its own name and it looks orphaned — which would register a stdlib
+        type into every registry that imported it. Requiring the same root keeps this
+        to "a helper inside this package built this class", which is the case worth
+        rescuing. A class built by a helper in some *other* distribution stays
+        unregistered.
+
+        Args:
+            class_def: The class being considered.
+            name_of_package: Dotted path of the module being scanned.
+
+        Returns:
+            True when the class was built inside this package and no module binds it.
+        """
+        home_name = getattr(class_def, "__module__", "") or ""
+        if home_name.split(".")[0] != name_of_package.split(".")[0]:
+            return False
+
+        home = sys.modules.get(home_name)
+        if home is None:
+            # The home module is not imported, so nothing can be concluded. Staying
+            # conservative keeps the previous behaviour rather than guessing.
+            return False
+
+        class_name = getattr(class_def, "__name__", "")
+        return bool(class_name) and getattr(home, class_name, None) is not class_def
+
+    @classmethod
     def __is_excluded(cls, dotted_name: str, patterns: tuple[str, ...]) -> bool:
         """
         Test a dotted module path against the caller's exclude patterns.
@@ -1025,7 +1083,9 @@ class Registry:
 
             classes = []
             for name, obj in inspect.getmembers(module, inspect.isclass):
-                if obj.__module__ == name_of_package:
+                if obj.__module__ == name_of_package or cls.__is_orphaned(
+                    obj, name_of_package
+                ):
                     classes.append((name, obj))
 
             for class_name, class_def in classes:
