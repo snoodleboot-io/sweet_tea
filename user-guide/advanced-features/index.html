@@ -804,6 +804,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#registering-one-class-lazily" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registering one class lazily
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#reading-the-registry-directly" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1531,22 +1542,43 @@ Passing <code>eager</code> without <code>lazy</code> is an error rather than a n
 naming the <code>eager</code> pattern that would fix it, instead of quietly importing the tree.</p>
 <h3 id="accuracy">Accuracy</h3>
 <p>Once a module is imported, its entries are rebuilt by the same discovery an eager fill
-uses, so a resolved module matches eager registration exactly. Before that, the view is
+uses, so a resolved module matches eager registration exactly — plus anything registered
+by hand with <code>register_lazy</code>, which is carried forward rather than rebuilt (see
+<a href="#registering-one-class-lazily">Registering one class lazily</a>). Before that, the view is
 approximate in both directions: a class replaced by a decorator, a <code>TYPE_CHECKING</code>-only
 class, or a class behind an uninstalled dependency may appear in <code>list_keys()</code> and
 vanish on resolution, and runtime-injected names are missing until something asks. Call
 <code>Registry.resolve_all()</code> when you need an exact registry — it imports everything, which
 is by definition eager.</p>
+<h3 id="registering-one-class-lazily">Registering one class lazily</h3>
+<p><code>Registry.register_lazy(key, module, attribute, library="", label="")</code> adds a single
+deferred entry, without a scan or a tree walk. Use it to register a class you already
+know the location of — most usefully under a key of your own:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">register_lazy</span><span class="p">(</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>    <span class="n">key</span><span class="o">=</span><span class="s2">"pattern_alias"</span><span class="p">,</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">module</span><span class="o">=</span><span class="s2">"myapp.patterns.retry"</span><span class="p">,</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">attribute</span><span class="o">=</span><span class="s2">"RetryPattern"</span><span class="p">,</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="n">library</span><span class="o">=</span><span class="s2">"mylib"</span><span class="p">,</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    <span class="n">label</span><span class="o">=</span><span class="s2">"alias"</span><span class="p">,</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="p">)</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pattern_alias"</span><span class="p">)</span>     <span class="c1"># imports myapp.patterns.retry, and nothing else</span>
+</span></code></pre></div>
+<p>The key, library and label are kept exactly as given. Resolving the module registers
+everything discovery finds in it as well, so an alias and the class's own discovered key
+both end up registered — two keys, one class. An entry whose <code>attribute</code> the module turns
+out not to bind to a class is dropped on resolution, which is the same rule a scanned
+name is held to.</p>
 <h3 id="reading-the-registry-directly">Reading the registry directly</h3>
 <p><code>Registry.entries()</code> returns unresolved entries too, and reading <code>entry.class_def</code> on
 one imports its module and hands back the class — so code that introspects the registry
 keeps working:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># resolves only the entries this filter actually selected</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">entry</span><span class="o">.</span><span class="n">class_def</span>
-</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span>
-</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">entry</span><span class="o">.</span><span class="n">library</span> <span class="o">==</span> <span class="s2">"mylib"</span>
-</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># resolves only the entries this filter actually selected</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>    <span class="n">entry</span><span class="o">.</span><span class="n">class_def</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">entry</span><span class="o">.</span><span class="n">library</span> <span class="o">==</span> <span class="s2">"mylib"</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="p">]</span>
 </span></code></pre></div>
 <p>Because the filter runs first, only the matching entries' modules are imported. A loop
 that touches <code>class_def</code> on <em>every</em> entry is effectively an eager fill.</p>
@@ -1575,11 +1607,11 @@ defer their lookups to first use.</p>
 <p>Filling a registry walks a package tree. Lazy filling skips the imports but still reads
 every source file. A snapshot skips both — write the filled registry once, read it back
 as data:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>      <span class="c1"># build step</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>        <span class="c1"># every run after</span>
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>      <span class="c1"># build step</span>
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>        <span class="c1"># every run after</span>
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Measured on an 880-module package, all producing the same 799 entries:</p>
 <table>
@@ -1629,15 +1661,15 @@ a later fill would pass, so it is deliberately conservative: editing a file that
 never registered still marks the snapshot stale. <code>__pycache__</code> is ignored, since
 bytecode is derived.</p>
 <h3 id="what-a-snapshot-records">What a snapshot records</h3>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="p">{</span>
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"relative_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"."</span><span class="p">,</span>
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="w">               </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
-</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
-</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">}],</span>
-</span><span id="__span-15-7"><a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span>
-</span><span id="__span-15-8"><a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">                </span><span class="s2">"missing optional dependency: ModuleNotFoundError: No module named 'redis'"</span><span class="p">}</span>
-</span><span id="__span-15-9"><a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="p">}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"relative_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"."</span><span class="p">,</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">               </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
+</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">}],</span>
+</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span>
+</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="w">                </span><span class="s2">"missing optional dependency: ModuleNotFoundError: No module named 'redis'"</span><span class="p">}</span>
+</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="p">}</span>
 </span></code></pre></div>
 <p><code>class_def</code> is <code>module:attribute</code> — the attribute the class is <em>bound to</em>, which is how
 the registry keys it and is not always the class's own <code>__name__</code>.</p>
