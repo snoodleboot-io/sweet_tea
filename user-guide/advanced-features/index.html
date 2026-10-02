@@ -747,6 +747,67 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#lazy-registration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lazy Registration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Lazy Registration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-it-costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What it costs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#names-it-cannot-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Names it cannot see
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accuracy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accuracy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#adopting-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Adopting it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1307,6 +1368,52 @@
 </span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>
 </span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="n">app</span> <span class="o">=</span> <span class="n">Application</span><span class="p">(</span><span class="n">db_factory</span><span class="p">,</span> <span class="n">cache_factory</span><span class="p">)</span>
 </span></code></pre></div>
+<h2 id="lazy-registration">Lazy Registration</h2>
+<p><code>fill_registry</code> imports every module in the tree to find the classes in it. With
+<code>lazy=True</code> it reads the names out of the source instead, and imports a module only
+when a factory first needs a class from it:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>   <span class="c1"># imports just that module</span>
+</span></code></pre></div>
+<p>Measured on a 880-module package: filling drops from 1,165 ms, 46 MB and 1,600 imported
+modules to 552 ms, 4.3 MB and none. The saving is whatever you never ask for — and it
+persists for the life of the process, unlike the one-off startup cost.</p>
+<h3 id="what-it-costs">What it costs</h3>
+<p>Creation is not faster. The import still happens, just later and only if needed, so the
+first <code>create()</code> for a module pays what the fill used to. For a package of small
+pure-Python modules with warm <code>.pyc</code> files, parsing can even cost <em>more</em> than importing
+would have; the win there is memory and unexecuted code, not wall clock.</p>
+<h3 id="names-it-cannot-see">Names it cannot see</h3>
+<p>Registration keys off the module attribute a class is bound to, so ordinary classes,
+aliases, <code>type()</code> calls, <code>namedtuple</code>, <code>Enum</code> and <code>create_model</code> results are all found
+by reading the source. Classes injected at runtime — <code>globals()[name] = type(...)</code>,
+<code>setattr(module, ...)</code> — leave no trace to read. Asking for one of those triggers a
+fallback sweep that imports everything still pending and warns:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>SweetTeaWarning: Importing 43 remaining module(s) to look for loopa: no lazily
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>registered name matched. Add the defining module to fill_registry(eager=[...]).
+</span></code></pre></div>
+<p>Name those modules up front and the sweep never happens:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eager</span><span class="o">=</span><span class="p">[</span><span class="s2">"myapp.plugins.*"</span><span class="p">])</span>
+</span></code></pre></div>
+<p><code>eager</code> patterns match the same way <code>exclude</code> patterns do, and <code>exclude</code> still wins.
+Passing <code>eager</code> without <code>lazy</code> is an error rather than a no-op.</p>
+<p>Use <code>lazy="strict"</code> to refuse the sweep outright — a name no scan could see then raises,
+naming the <code>eager</code> pattern that would fix it, instead of quietly importing the tree.</p>
+<h3 id="accuracy">Accuracy</h3>
+<p>Once a module is imported, its entries are rebuilt by the same discovery an eager fill
+uses, so a resolved module matches eager registration exactly. Before that, the view is
+approximate in both directions: a class replaced by a decorator, a <code>TYPE_CHECKING</code>-only
+class, or a class behind an uninstalled dependency may appear in <code>list_keys()</code> and
+vanish on resolution, and runtime-injected names are missing until something asks. Call
+<code>Registry.resolve_all()</code> when you need an exact registry — it imports everything, which
+is by definition eager.</p>
+<h3 id="adopting-it">Adopting it</h3>
+<p>Lazy filling assumes nothing needs the registry to be complete <em>while modules are still
+importing</em>. A package that resolves classes through the registry at import time — in a
+module body, or in a function a module body calls — will fail under <code>lazy=True</code>, because
+the entries it wants have not been resolved yet. Put such modules in <code>eager=[...]</code>, or
+defer their lookups to first use.</p>
 
 
 
