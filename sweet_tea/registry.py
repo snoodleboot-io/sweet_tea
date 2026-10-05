@@ -83,7 +83,11 @@ class Registry:
 
     # Set when any subtree was filled with lazy="strict": a key that no static scan
     # could see then raises instead of triggering a whole-tree sweep.
-    __no_sweep: bool = False
+    # Roots filled with lazy="strict". Strictness belongs to a tree, not to the
+    # process: a library doing its own strict fill must not stop an application's
+    # unrelated tree from sweeping (SWE-25). Keyed by the root module the fill
+    # started from, which is also how __fills keys itself.
+    __strict_fills: set[str] = set()
 
     # Trees that have been filled, mapped to the directory walked. Only the outermost
     # call of each fill is recorded, so a snapshot names the roots a consumer asked
@@ -320,30 +324,48 @@ class Registry:
                 return
 
             requested = ", ".join(sorted(wanted))
-            pending_count = len(cls.__unresolved)
-            no_sweep = cls.__no_sweep
-
-        # Out of the lock before raising, warning or sweeping: resolve_all imports,
-        # and a warning filter that escalates must not unwind holding the registry.
-        if no_sweep:
-            raise SweetTeaError(
-                f"No entry for {requested} and the registry was filled with "
-                f'lazy="strict", so the remaining {pending_count} module(s) '
-                f"will not be imported to look for it. Name the module that "
-                f"defines it in fill_registry(eager=[...]) if it is created at "
-                f"runtime rather than by a class statement."
+            # Strictness is per tree, so the pending modules split in two: those a
+            # strict fill owns, which will not be imported, and the rest, which the
+            # sweep may still have.
+            sweepable = sorted(
+                name for name in cls.__unresolved if not cls.__strict_owner(name)
+            )
+            refused = sorted(
+                {
+                    owner
+                    for name in cls.__unresolved
+                    if (owner := cls.__strict_owner(name))
+                }
             )
 
-        # Reported, not silent: a sweep undoes the saving lazy filling exists for,
-        # so the caller needs to know which key caused it.
-        warnings.warn(
-            f"Importing {pending_count} remaining module(s) to look for "
-            f"{requested}: no lazily registered name matched. Add the defining "
-            f"module to fill_registry(eager=[...]) to avoid this.",
-            SweetTeaWarning,
-            stacklevel=2,
-        )
-        cls.resolve_all()
+        # Out of the lock before raising, warning or sweeping: resolving imports, and
+        # a warning filter that escalates must not unwind holding the registry.
+        if sweepable:
+            # Reported, not silent: a sweep undoes the saving lazy filling exists
+            # for, so the caller needs to know which key caused it.
+            warnings.warn(
+                f"Importing {len(sweepable)} remaining module(s) to look for "
+                f"{requested}: no lazily registered name matched. Add the defining "
+                f"module to fill_registry(eager=[...]) to avoid this.",
+                SweetTeaWarning,
+                stacklevel=2,
+            )
+            for module_name in sweepable:
+                cls.__resolve_module(module_name)
+
+            with cls.__lock:
+                if any(entry.key in wanted for entry in cls.__registry):
+                    return
+
+        if refused:
+            trees = ", ".join(refused)
+            raise SweetTeaError(
+                f"No entry for {requested}, and {trees} was filled with "
+                f'lazy="strict", so its remaining modules will not be imported to '
+                f"look for it. Name the module that defines it in "
+                f"fill_registry(eager=[...]) if it is created at runtime rather "
+                f"than by a class statement."
+            )
 
     @classmethod
     def skipped(cls) -> dict[str, str]:
@@ -534,6 +556,22 @@ class Registry:
                 f"possible class and turned out to be {type(resolved).__name__}."
             )
         return resolved
+
+    @classmethod
+    def __strict_owner(cls, module_name: str) -> str | None:
+        """
+        The strictly filled root that owns a module, if any.
+
+        Args:
+            module_name: Dotted path of a pending module.
+
+        Returns:
+            The root it belongs to, or None when no strict fill covers it.
+        """
+        for root in cls.__strict_fills:
+            if module_name == root or module_name.startswith(f"{root}."):
+                return root
+        return None
 
     @classmethod
     def resolve_all(cls) -> None:
@@ -876,8 +914,6 @@ class Registry:
                 "Pass lazy=True, or drop eager: without it every module is imported "
                 "at fill time already."
             )
-        if lazy == "strict":
-            cls.__no_sweep = True
         # Deliberately not holding __lock across the walk. The walk imports, and
         # holding the registry's lock while a module body runs is what deadlocked
         # against CPython's per-module import locks -- a thread importing one of
@@ -917,6 +953,13 @@ class Registry:
                 for filled in cls.__fills
             ):
                 cls.__fills[module] = path_str
+
+            # Recorded under the lock, and separately from __fills: a tree already
+            # recorded there by an earlier fill would otherwise never pick up a later
+            # strict one. Judged by ancestry for the same reason __fills is, so a
+            # recursive call into a subpackage does not add a second root.
+            if lazy == "strict" and not cls.__strict_owner(module):
+                cls.__strict_fills.add(module)
 
         # Materialised once so the recursive calls below share a single tuple rather
         # than re-consuming a caller-supplied iterator, which would be exhausted

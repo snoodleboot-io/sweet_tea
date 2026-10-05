@@ -28,9 +28,10 @@ def reset_registry() -> None:
         "unresolved",
         "fills",
         "skipped",
+        "strict_fills",
     ):
         getattr(Registry, f"_Registry__{attribute}").clear()
-    Registry._Registry__no_sweep = False
+    Registry._Registry__strict_fills.clear()
 
 
 class ScanFailureCase(TestCase):

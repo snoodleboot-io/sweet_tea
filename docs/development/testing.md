@@ -73,14 +73,14 @@ If a test uses `fill_registry(lazy=True)`, clear two more:
 
 ```python
     Registry._Registry__unresolved.clear()   # modules still pending import
-    Registry._Registry__no_sweep = False     # set by lazy="strict"
+    Registry._Registry__strict_fills.clear() # roots filled with lazy="strict"
     Registry._Registry__fills.clear()        # trees filled, recorded for export()
     Registry._Registry__skipped.clear()      # modules skipped, recorded for export()
 ```
 
 Leaving `__unresolved` populated is not unsafe — a module whose entries have been
-cleared is dropped rather than re-imported — but `lazy="strict"` is sticky, so a later
-test that expects a fallback sweep would see it refused instead.
+cleared is dropped rather than re-imported — but a recorded strict root persists, so a
+later test filling the same tree and expecting a fallback sweep would see it refused.
 
 ### Factory Testing
 ```python

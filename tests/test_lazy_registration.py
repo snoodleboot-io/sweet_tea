@@ -32,7 +32,7 @@ def reset_registry() -> None:
     Registry._Registry__lookup_keys.clear()
     Registry._Registry__unresolved.clear()
     Registry._Registry__skipped.clear()
-    Registry._Registry__no_sweep = False
+    Registry._Registry__strict_fills.clear()
 
 
 def forget_case_modules() -> None:
@@ -593,3 +593,74 @@ class TestExplicitLazyEntriesSurviveResolution(TestCase):
 
         self.assertEqual(len(Registry.entries()), count)
         self.assertEqual(len([e for e in Registry.entries() if e.key == "my_alias"]), 1)
+
+
+class TestStrictnessIsPerTree(TestCase):
+    """lazy="strict" describes the tree it filled, not the process (SWE-25)."""
+
+    STRICT_PATH = os.path.join(os.path.dirname(__file__), "lazy_audit_cases")
+    STRICT_MODULE = "tests.lazy_audit_cases"
+
+    def setUp(self):
+        reset_registry()
+        forget_case_modules()
+
+    def tearDown(self):
+        reset_registry()
+
+    def fill_strict_elsewhere(self) -> None:
+        """Fill an unrelated tree strictly."""
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SweetTeaWarning)
+            Registry.fill_registry(
+                path=self.STRICT_PATH, module=self.STRICT_MODULE, lazy="strict"
+            )
+
+    def test_a_strict_tree_does_not_refuse_another_trees_sweep(self):
+        """The defect: one strict fill anywhere refused every sweep in the process."""
+        fill(lazy=True)
+        self.fill_strict_elsewhere()
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SweetTeaWarning)
+            instance = Factory.create("loopa")
+
+        self.assertEqual(instance.__class__.__name__, "LoopA")
+
+    def test_a_strict_tree_still_refuses_its_own(self):
+        """Narrowing the scope must not lose the guarantee for the tree that asked."""
+        fill(lazy="strict")
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Factory.create("loopa")
+
+        self.assertIn("eager", str(raised.exception))
+
+    def test_the_refusal_names_the_tree(self):
+        """A caller with several trees needs to know which policy refused."""
+        fill(lazy="strict")
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Factory.create("loopa")
+
+        self.assertIn(CASES_MODULE, str(raised.exception))
+
+    def test_a_later_strict_fill_of_a_filled_tree_is_recorded(self):
+        """Strictness is tracked apart from the fill roots, so a second fill counts."""
+        fill(lazy=True)
+        fill(lazy="strict")
+
+        with self.assertRaises(SweetTeaError):
+            Factory.create("loopa")
+
+    def test_a_sweep_still_runs_for_the_unstrict_part(self):
+        """Pending modules split: the strict tree is refused, the rest are swept."""
+        fill(lazy=True)
+        self.fill_strict_elsewhere()
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", SweetTeaWarning)
+            Factory.create("loopa")
+
+        swept = [w for w in caught if "remaining module" in str(w.message)]
+        self.assertEqual(len(swept), 1, [str(w.message) for w in caught])
