@@ -16,6 +16,9 @@ A filled registry recorded as data, so it can be read back without a walk.
 """
 
 import json
+import os
+import stat
+import tempfile
 from typing import ClassVar
 
 from pydantic import BaseModel, Field
@@ -48,10 +51,23 @@ class RegistrySnapshot(BaseModel):
     #: stale — so the version moved rather than the field being added quietly. A
     #: version 1 file still loads here: no relative record means check the absolute
     #: path, exactly as before.
-    FORMAT_VERSION: ClassVar[int] = 2
+    #:
+    #: 3 changed how a source digest is computed (SWE-28): the records inside it are
+    #: framed, and symlinked subpackages are followed. No key moved, but every digest
+    #: value did, which is the same situation by the same test — two readers reach
+    #: different verdicts about one unchanged file. Both verdicts are "stale", so
+    #: nothing is taken for current either way, and the version earns its keep in the
+    #: message instead: a format 2 file read here verifies as stale and says to
+    #: re-export, which is a riddle when nothing changed, whereas a format 3 file read
+    #: by a sweet_tea that predates the framing is refused outright and says precisely
+    #: why. The remedy in both directions is to re-export, and the version is what lets
+    #: a reader say so.
+    FORMAT_VERSION: ClassVar[int] = 3
 
     version: int = Field(
         default=FORMAT_VERSION,
+        ge=1,
+        strict=True,
         description="Snapshot format version",
     )
 
@@ -72,7 +88,24 @@ class RegistrySnapshot(BaseModel):
 
     def write(self, path: str) -> None:
         """
-        Write this snapshot to a file as JSON.
+        Write this snapshot to a file as JSON, atomically.
+
+        The JSON is built in a temporary file beside its destination and moved into
+        place with :func:`os.replace`, which is atomic on POSIX and on Windows. Writing
+        in place truncated the file and then filled it, and a reader arriving in
+        between saw an empty or half-written document: one exporter against four
+        loaders on one path produced 194 unparseable reads in six seconds (SWE-26). The
+        unparseable read is the loud failure. The dangerous one is the truncated
+        document that happens to parse, since that registers a silently incomplete
+        registry instead of raising.
+
+        A rename is the right instrument rather than a lock. :meth:`read` takes no lock
+        — deliberately, so that reading a snapshot contends with nothing — and a lock
+        could not help anyway when the exporter and the reader are different processes,
+        which for a build step writing what a running service reads is the normal case.
+        Durability is a separate problem and deliberately left alone: nothing is
+        fsynced, so a crash can still lose this write. What a reader must never see is
+        a file that is neither the old snapshot nor the new one.
 
         Args:
             path: Destination file.
@@ -80,12 +113,69 @@ class RegistrySnapshot(BaseModel):
         Raises:
             SweetTeaError: When the file cannot be written.
         """
+        destination = os.path.abspath(path)
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(self.model_dump(), handle, indent=2, sort_keys=False)
-                handle.write("\n")
+            # The same directory, so that the move is a rename rather than a copy —
+            # across file systems os.replace is neither atomic nor even possible.
+            descriptor, temporary = tempfile.mkstemp(
+                dir=os.path.dirname(destination),
+                prefix=f".{os.path.basename(destination)}.",
+                suffix=".tmp",
+            )
         except OSError as error:
             raise SweetTeaError(f"Cannot write snapshot to {path}: {error}") from error
+
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(self.model_dump(), handle, indent=2, sort_keys=False)
+                handle.write("\n")
+            os.chmod(temporary, self.__destination_mode(destination))
+            os.replace(temporary, destination)
+        except OSError as error:
+            self.__discard(temporary)
+            raise SweetTeaError(f"Cannot write snapshot to {path}: {error}") from error
+        except BaseException:
+            # Not every failure here is the file system's — a model that will not dump,
+            # or an interrupt — and none of them may leave a temp file behind.
+            self.__discard(temporary)
+            raise
+
+    @staticmethod
+    def __destination_mode(path: str) -> int:
+        """
+        The permissions a freshly written snapshot should carry.
+
+        :func:`tempfile.mkstemp` creates a file only its owner can read, which is right
+        for a secret and wrong for a snapshot: a build writes it and everything that
+        loads it has to read it. Whatever mode the file being replaced already had is
+        somebody's decision, so it is kept; a snapshot being written for the first time
+        gets the ordinary readable default.
+
+        Args:
+            path: Destination file, which need not exist yet.
+
+        Returns:
+            Permission bits to put on the replacement.
+        """
+        try:
+            return stat.S_IMODE(os.stat(path).st_mode)
+        except OSError:
+            return 0o644
+
+    @staticmethod
+    def __discard(path: str) -> None:
+        """
+        Remove a temporary file, ignoring a failure to do so.
+
+        Args:
+            path: Temporary file to remove.
+        """
+        try:
+            os.unlink(path)
+        except OSError:
+            # The caller is about to report why the write failed, and that is the more
+            # useful error of the two; a temp file left behind is not worth losing it.
+            pass
 
     @classmethod
     def read(cls, path: str) -> "RegistrySnapshot":

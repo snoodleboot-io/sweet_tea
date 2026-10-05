@@ -213,9 +213,20 @@ the recorded trees by default and raises `SweetTeaError` when they differ; only 
 Moving the tree is not a difference. Sources are recorded relative to their root package
 (format version 2) and located through `importlib.util.find_spec` on the top-level name,
 which executes nothing, so a snapshot built in CI and shipped inside the wheel verifies
-from the consumer's `site-packages`. Format 1 snapshots still load and are checked
-against the absolute export directory, as they always were; a reader that predates the
-field refuses a version 2 file rather than mis-judging it.
+from the consumer's `site-packages`. A root package that locates to several directories —
+a namespace package has one per portion — has all of them tried, and a directory is
+accepted only when its sources hash to the recorded digest; the recorded absolute
+directory is the last resort. A `relative_path` that is absolute or escapes its root
+package is refused as malformed, as is a `version` that is not a positive integer.
+
+The digest covers symlinked subpackages, because filling registers from them (format
+version 3; the framing inside the digest changed with it, so every digest value moved).
+An older snapshot parses but verifies as stale, and a reader that predates a format
+refuses the newer file rather than mis-judging it; re-export either way.
+
+`export` writes a temporary file beside the destination and renames it over the
+destination, so a concurrent `load` — in this process or another — reads the old
+snapshot or the new one, never a truncated one. No lock is held across the file I/O.
 
 `Registry.skipped()` reports the modules a fill could not import, each mapped to
 `<category>: <ExceptionType>[: <message>]`, where the category is
