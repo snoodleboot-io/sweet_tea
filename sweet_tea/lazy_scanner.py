@@ -66,6 +66,12 @@ class LazyScanner:
         """
         Scan one source file for registrable names.
 
+        Read as bytes rather than text, and handed to :func:`ast.parse` that way, so
+        that a module declaring a non-UTF-8 encoding is scanned rather than rejected.
+        ``ast.parse`` honours a PEP 263 coding cookie in bytes, and an import honours
+        it too, so reading as UTF-8 text would have failed on a module the eager path
+        registers perfectly well.
+
         Args:
             path: Path to the ``.py`` file.
 
@@ -74,11 +80,14 @@ class LazyScanner:
             provisional.
 
         Raises:
-            SweetTeaError: When the file cannot be read or parsed. Eager filling fails
-                on such a module too — via ImportError — so both paths reject it.
+            SweetTeaError: When the file cannot be read, with the ``OSError`` as the
+                cause, or cannot be parsed, with the ``SyntaxError`` as the cause. The
+                caller tells the two apart by that cause, because they do not mean the
+                same thing: unparsable source cannot be imported either, while an
+                unreadable one may still import from cached bytecode.
         """
         try:
-            with open(path, encoding="utf-8") as handle:
+            with open(path, "rb") as handle:
                 source = handle.read()
         except OSError as error:
             raise SweetTeaError(f"Cannot read {path}: {error}") from error
@@ -86,12 +95,15 @@ class LazyScanner:
         return cls.scan_source(source, path)
 
     @classmethod
-    def scan_source(cls, source: str, path: str = "<string>") -> dict[str, bool]:
+    def scan_source(
+        cls, source: str | bytes, path: str = "<string>"
+    ) -> dict[str, bool]:
         """
         Scan module source for registrable names.
 
         Args:
-            source: Python source text.
+            source: Python source, as text or as the raw bytes of a file. Bytes keep
+                a PEP 263 coding declaration meaningful.
             path: Origin of the source, used only for error messages.
 
         Returns:

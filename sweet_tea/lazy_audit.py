@@ -68,8 +68,9 @@ class LazyAudit:
         try:
             tree = ast.parse(source)
         except SyntaxError:
-            # An unparsable module fails the fill in either mode; the scanner reports
-            # that, and an audit finding here would only duplicate it.
+            # Unparsable source is the scanner's to report, not the audit's: the fill
+            # skips such a module with a warning and a skipped() record (SWE-23), and
+            # a finding here would only duplicate that.
             return []
 
         sweet_tea_names = cls._sweet_tea_names(tree)

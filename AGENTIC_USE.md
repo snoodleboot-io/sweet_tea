@@ -190,6 +190,11 @@ lazy filling, and `fill_registry(lazy=True, eager="auto")` acts on that report. 
 audit sees module-level statements and one hop into functions they call, so an
 import-time lookup buried deeper is caught at runtime instead.
 
+A lazy fill parses instead of importing, so source it cannot handle is its own case:
+unparsable source is skipped and recorded like an unimportable module, while
+unreadable source is imported instead (bytecode may still load it). A non-UTF-8
+coding declaration is honoured, not an error. Either way the fill continues.
+
 Classes created at runtime (`globals()[name] = type(...)`) cannot be seen in source.
 Requesting one imports every module still pending and warns; `lazy="strict"` raises
 instead. `eager` without `lazy` raises `SweetTeaError`.
