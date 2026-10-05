@@ -17,7 +17,7 @@ Registry entry model for storing class registration information.
 
 from typing import Callable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 #: Set by :mod:`sweet_tea.registry` at import time. Takes an entry's module and
 #: attribute and returns the class, importing the module if needed. It lives here as a
@@ -101,6 +101,16 @@ class Entry(BaseModel):
     # storage name on purpose.
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
+    #: Where a resolved class is cached when this entry is still lazy. Deliberately a
+    #: private attribute rather than ``class_object``: entries() hands out the
+    #: registry's own Entry objects (the copy is of the list), so writing the public
+    #: field from a reader flipped ``is_lazy`` to False and changed ``identity`` on a
+    #: live entry -- which made it survive resolution's drop and slip past the dedupe
+    #: index, duplicating entries and breaking lookups (SWE-37). Nothing the registry
+    #: reasons about touches this, so caching here cannot disturb it. Private attrs
+    #: are excluded from model_dump, so the serialised shape is unchanged.
+    _resolved: type | None = PrivateAttr(default=None)
+
     @property
     def class_def(self) -> type | None:
         """
@@ -114,6 +124,12 @@ class Entry(BaseModel):
         Only this entry's own module is imported, so a filtered read resolves only what
         it touched. Use :attr:`is_lazy` to check the state without importing anything.
 
+        Reading this does **not** make the entry look resolved. ``entries()`` returns a
+        copy of the registry's list, not of its entries, so this object may well be the
+        registry's own -- and a reader must not change what the registry reasons about.
+        The class is cached privately instead (see :attr:`_resolved`); the registry
+        becomes the resolved entry's author when it reconciles the module.
+
         Returns:
             The class, or None for an entry that is neither resolved nor resolvable.
 
@@ -123,13 +139,13 @@ class Entry(BaseModel):
         """
         if self.class_object is not None:
             return self.class_object
+        if self._resolved is not None:
+            return self._resolved
         if not self.module or not self.attribute or _resolver is None:
             return None
 
         resolved = _resolver(self.module, self.attribute)
-        # Memoised on this copy: entries() hands out copies, so resolving through one
-        # must not leave the next read of the same copy importing again.
-        self.class_object = resolved
+        self._resolved = resolved
         return resolved
 
     provisional: bool = Field(
@@ -147,7 +163,8 @@ class Entry(BaseModel):
         Whether this entry still needs its module imported.
 
         Deliberately reads the stored field rather than :attr:`class_def`, so asking
-        the question does not answer it by importing.
+        the question does not answer it by importing -- and so that a reader having
+        resolved this entry's class does not make it look registered (SWE-37).
         """
         return self.class_object is None
 

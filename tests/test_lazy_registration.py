@@ -388,14 +388,23 @@ class TestLazyEntryIntrospection(TestCase):
         self.assertIsInstance(matches[0], type)
         self.assertEqual(matches[0].__name__, "Plain")
 
-    def test_resolution_is_memoised_on_the_copy(self):
-        """Reading twice through one copy must not import twice."""
+    def test_resolution_is_cached_without_marking_the_entry_resolved(self):
+        """Reading twice must not import twice, and must not alter the entry.
+
+        This asserted ``is_lazy`` became False until SWE-37. It did, and that was
+        the defect: entries() hands out the registry's own entries, so a reader
+        flipping that flag made the entry survive resolution's drop and slip past
+        the dedupe index. The class is cached privately now, so reads stay cheap
+        while the entry keeps saying what the registry believes about it.
+        """
         fill(lazy=True)
         entry = next(e for e in Registry.entries() if e.key == "plain")
 
         first = entry.class_def
-        self.assertFalse(entry.is_lazy)
+
         self.assertIs(entry.class_def, first)
+        self.assertTrue(entry.is_lazy)
+        self.assertIsNone(entry.class_object)
 
     def test_provisional_guess_that_is_not_a_class_raises(self):
         """A name read from source that turns out to be a value reports clearly."""

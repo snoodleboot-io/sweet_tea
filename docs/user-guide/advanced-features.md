@@ -414,6 +414,10 @@ Two things to know:
 
 - **Reading an attribute can now raise.** A module that fails to import, or a name the
   scanner guessed at that turns out not to be a class, raises `SweetTeaError` on access.
+- **Reading does not alter the entry.** `entries()` copies the list, not the entries, so
+  the objects you get are the registry's own. Resolving through one caches the class for
+  your reads but leaves `is_lazy` and `class_object` saying what the registry believes,
+  because a reader changing those corrupted the registry under concurrent lookups.
 - **`entry.is_lazy` does not resolve.** Use it to check whether a read would import
   anything. `entry.class_object` exposes the stored class without resolving, for code
   that wants to see unresolved entries as unresolved.
