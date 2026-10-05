@@ -230,10 +230,43 @@ SingletonFactory.create("pg", configuration={"host": "replica"})
 # still applies.
 ```
 
-Fetching an existing singleton without a configuration is the normal idiom and stays
-silent. A model and an equivalent dict compare equal, so switching between them does
-not warn. Where a configuration holds values whose comparison is not a plain boolean —
-a numpy array, say — drift cannot be judged and nothing is said.
+### What counts as a different configuration
+
+Drift is judged on the keyword arguments construction would use, not on what the caller
+typed, so spellings that build one instance are one configuration:
+
+- **No configuration at all.** Fetching an existing singleton without a configuration is
+  the normal idiom and stays silent, and `configuration={}` says the same thing —
+  `create(key, configuration=options.get("cfg", {}))` is a fetch, not a rebuild request.
+- **A model and an equivalent dict**, in either order, including the model a declared
+  `__configuration__` validates a dict into.
+- **A declared default spelled out.** With `__configuration__` declaring `retries: int = 3`,
+  `create(key)` and `create(key, {"retries": 3})` agree, because the schema is applied
+  before the comparison. The schema also decides which spellings are equivalent: where
+  it declares `retries: int`, passing `True` or `1.0` is coerced to `1` and agrees with
+  `1`.
+- **Values a constructor mutates.** The comparison basis is deep-copied before the
+  constructor runs, so a constructor appending to a list it was handed does not make the
+  next caller — who passed an equal list — look wrong.
+- **NaN.** `float("nan")` passed twice is the same request both times. That
+  `nan != nan` is a statement about arithmetic, not about what was asked for.
+
+And these genuinely differ, so they warn:
+
+- A configuration mutated between calls, **at any depth**: the basis is a snapshot, so
+  `nested["opts"]["mode"] = "slow"` followed by another `create` is reported.
+- `1` against `True`, and `1` against `1.0`, where no `__configuration__` declares them
+  equivalent. They reach the constructor as different types and behave differently once
+  there.
+- A configuration a declared `__configuration__` rejects. It cannot be the one the cached
+  instance was built from, and no `SweetTeaError` is raised for it either, since nothing
+  is constructed.
+
+Where drift cannot be judged, nothing is said: a configuration holding values whose
+comparison is not a plain boolean — a numpy array, say — or one that could not be
+reduced to keyword arguments at all. A value that cannot be deep-copied, such as a lock
+or an open file, is kept by reference instead, so it is compared as it is then; every
+other value in the configuration is still snapshotted.
 
 Use `Factory` when each caller needs its own configuration, or
 `SingletonFactory.pop(key)` to discard the cached instance before building a new one.

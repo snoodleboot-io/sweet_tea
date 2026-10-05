@@ -361,6 +361,16 @@ the exact variation matches first. When a returned object surprises you, check
   `SweetTeaWarning` naming the key; passing none, the ordinary way to fetch an
   existing singleton, is silent. Use `Factory` for per-call configuration, or
   `SingletonFactory.pop` to discard the instance first.
+- **Drift is judged on the keyword arguments construction would use**, not on
+  what you typed, so `None` and `{}` agree, a dict and the model a declared
+  `__configuration__` validates it into agree, a schema default spelled out
+  agrees with leaving it out, and two NaNs agree. The basis is deep-copied before
+  the constructor runs, so mutating a configuration you passed — at any depth —
+  is reported on the next call rather than silently rewriting what the first
+  call is recorded as having asked for. Absent a declared schema, `1`, `1.0` and
+  `True` are different requests. Where the comparison is undecidable — a value
+  whose `==` is not boolean, a still-lazy entry — nothing is said and nothing is
+  raised. Judging drift imports nothing and resolves nothing.
 
 ---
 
