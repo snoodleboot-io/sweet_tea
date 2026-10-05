@@ -216,6 +216,7 @@ class Registry:
         attribute: str,
         library: str = "",
         label: str = "",
+        provisional: bool = False,
     ) -> None:
         """
         Register a class by name, deferring its module's import until first use.
@@ -240,11 +241,17 @@ class Registry:
             attribute: Module attribute the class is bound to.
             library: Name of the library the class belongs to.
             label: Optional label for categorizing classes.
+            provisional: True when the name was read out of source rather than asked
+                for. A scanned name is a guess, so discovery overrules it once the
+                module is imported; an explicit registration is a request, so it is
+                kept (SWE-20). Callers outside this class leave it False, which is
+                what makes an alias survive resolution.
         """
         new_entry = Entry(
             key=key.lower(),
             module=module,
             attribute=attribute,
+            provisional=provisional,
             library=library.lower(),
             label=label.lower(),
         )
@@ -791,8 +798,31 @@ class Registry:
                 continue
 
             resolved = getattr(module, entry.attribute, None)
-            if isinstance(resolved, type):
-                carried.append((entry, resolved))
+            if not isinstance(resolved, type):
+                continue
+
+            # A scanned name is only a guess about what the source would produce, so
+            # discovery's own rules decide whether to keep it: the class must belong
+            # to this module, or be one no module binds (SWE-20). Without this, a
+            # name the scanner saw bound to a class from somewhere else survived --
+            # the try/except import fallback is the common shape, and it registered a
+            # third-party class under this library's name:
+            #
+            #     try:
+            #         from foreignlib import Encoder
+            #     except ImportError:
+            #         class Encoder: ...
+            #
+            # An explicit register_lazy is not a guess and is kept regardless, which
+            # is the whole point of carrying entries forward: a caller naming module
+            # and attribute may well be pointing at a re-export.
+            if entry.provisional and not (
+                resolved.__module__ == module_name
+                or cls.__is_orphaned(resolved, module_name)
+            ):
+                continue
+
+            carried.append((entry, resolved))
 
         return carried
 
@@ -1191,6 +1221,7 @@ class Registry:
                 attribute=attribute,
                 library=library,
                 label=label,
+                provisional=True,
             )
 
         with cls.__lock:

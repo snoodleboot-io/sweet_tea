@@ -132,6 +132,15 @@ class Entry(BaseModel):
         self.class_object = resolved
         return resolved
 
+    provisional: bool = Field(
+        default=False,
+        description=(
+            "Whether this lazy entry came from reading source rather than from an "
+            "explicit register_lazy call, which decides whether discovery's rules "
+            "override it when its module is imported"
+        ),
+    )
+
     @property
     def is_lazy(self) -> bool:
         """

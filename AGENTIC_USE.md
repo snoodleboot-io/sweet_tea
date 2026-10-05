@@ -185,6 +185,10 @@ stored class, `None` while unresolved. `entry.model_dump()` names the class
 nothing — and is not JSON-serialisable once resolved, because a live class is not
 data; use `Registry.export(path)` for that.
 
+A name read out of source is a guess: if the module turns out to bind a class from
+another package there, it is dropped, matching what an eager fill registers. A name
+passed to `Registry.register_lazy` is a request and is kept, re-exports included.
+
 `Registry.lazy_audit(path=..., module=...)` reports what in a tree would not survive
 lazy filling, and `fill_registry(lazy=True, eager="auto")` acts on that report. The
 audit sees module-level statements and one hop into functions they call, so an
