@@ -1338,13 +1338,13 @@ detection does not scan the list, but it notices that the registry was cleared
 underneath it and rebuilds itself on the next <code>register</code> call.</p>
 <p>If a test uses <code>fill_registry(lazy=True)</code>, clear two more:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>    <span class="n">Registry</span><span class="o">.</span><span class="n">_Registry__unresolved</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>   <span class="c1"># modules still pending import</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">Registry</span><span class="o">.</span><span class="n">_Registry__no_sweep</span> <span class="o">=</span> <span class="kc">False</span>     <span class="c1"># set by lazy="strict"</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">Registry</span><span class="o">.</span><span class="n">_Registry__strict_fills</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span> <span class="c1"># roots filled with lazy="strict"</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">Registry</span><span class="o">.</span><span class="n">_Registry__fills</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>        <span class="c1"># trees filled, recorded for export()</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">Registry</span><span class="o">.</span><span class="n">_Registry__skipped</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>      <span class="c1"># modules skipped, recorded for export()</span>
 </span></code></pre></div>
 <p>Leaving <code>__unresolved</code> populated is not unsafe — a module whose entries have been
-cleared is dropped rather than re-imported — but <code>lazy="strict"</code> is sticky, so a later
-test that expects a fallback sweep would see it refused instead.</p>
+cleared is dropped rather than re-imported — but a recorded strict root persists, so a
+later test filling the same tree and expecting a fallback sweep would see it refused.</p>
 <h3 id="factory-testing">Factory Testing</h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Test configuration passing</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">instance</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"my_class"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"param"</span><span class="p">:</span> <span class="s2">"value"</span><span class="p">})</span>
