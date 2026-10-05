@@ -149,10 +149,16 @@ class CacheClient:
 **Contract:** the registry's lock covers its own state only. It is never held across a
 module import, and `SingletonFactory`'s lock is never held across a constructor, so a
 module body that reads the registry and a constructor that resolves a collaborator are
-both safe. A singleton is still built exactly once per key.
+both safe. A singleton is still built exactly once per key, including across a
+concurrent `clear()`. A constructor that asks for a key already being constructed —
+its own, or one further up the same chain, whether on this thread or round a cycle two
+threads entered from opposite ends — raises `SweetTeaError` naming the cycle instead of
+blocking.
 
 **Must not:** assume a fill is atomic. Concurrent fills and lookups interleave; the
 registry is consistent at every point, but a reader may observe a fill in progress.
+Must not rely on a constructor resolving its own key; that is a circular dependency and
+is refused.
 
 ### Lazy filling
 
@@ -358,6 +364,14 @@ the exact variation matches first. When a returned object surprises you, check
   only by `library` or `label` get separate instances. `pop` takes the same
   filters — `pop(key="Conn", library="redis")` — and popping without them cannot
   reach an entry that needed a filter to resolve.
+- **A singleton constructor must not create its own key**: resolving a *different*
+  singleton during construction is ordinary dependency injection and works, but
+  asking for the key being constructed — directly, or round a chain such as
+  `alpha -> beta -> alpha` — raises `SweetTeaError` naming the path round the
+  cycle. Two threads entering one cycle from opposite ends are refused the same
+  way, by `Deadlocked singleton construction`. No timeout is involved, so a slow
+  constructor is never mistaken for a cycle; a cycle running through a lock of
+  your own, outside the factory, cannot be seen and still deadlocks.
 - **The first call's `configuration` wins**: later calls return the cached
   instance and ignore their `configuration` argument entirely. The instance is
   never rebuilt, since other holders rely on its identity. Passing a
