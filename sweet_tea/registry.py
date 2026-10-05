@@ -80,11 +80,16 @@ class Registry:
     # it may define classes the scan cannot see, and the fallback sweep can only
     # import modules it knows about.
     # Keyed by module, then by the (library, label) each fill used, mapped to how
-    # many entries that fill's scan contributed. One pair per module was not enough:
+    # many entries that fill's scan contributed and whether a *fill* established the
+    # pair at all. The second half matters because resolution hands discovery's whole
+    # class list to each pair: a pair that exists only because a consumer registered
+    # one alias never asked for a whole-module fill, and giving it one re-registered
+    # every class in the module under the alias's label, making keys the consumer
+    # never touched ambiguous (SWE-35). One pair per module was not enough:
     # the same tree may be filled under several libraries, and resolution registered
     # everything discovery found under whichever pair arrived first, losing the
     # classes only discovery can see for every other pair (SWE-30).
-    __unresolved: dict[str, dict[tuple[str, str], int]] = {}
+    __unresolved: dict[str, dict[tuple[str, str], tuple[int, bool]]] = {}
 
     # Set when any subtree was filled with lazy="strict": a key that no static scan
     # could see then raises instead of triggering a whole-tree sweep.
@@ -285,7 +290,13 @@ class Registry:
                 # issubclass until it is resolved.
                 categories = cls.__unresolved.setdefault(module, {})
                 pair = (library.lower(), label.lower())
-                categories[pair] = categories.get(pair, 0) + 1
+                scanned, from_fill = categories.get(pair, (0, False))
+                # provisional marks the scanner's own calls, so an explicit
+                # registration never claims a pair for a fill that did not happen.
+                categories[pair] = (
+                    scanned + 1 if provisional else scanned,
+                    from_fill or provisional,
+                )
 
     @classmethod
     def ensure_resolved(cls, keys: Iterable[str], sweep: bool = True) -> None:
@@ -706,7 +717,7 @@ class Registry:
             # registrations the caller just cleared. A module that contributed nothing to
             # begin with is exempt: it has no entries to have lost, and is exactly the
             # case the sweep exists for.
-            if any(categories.values()) and not pending:
+            if any(scanned for scanned, _ in categories.values()) and not pending:
                 return
 
         try:
@@ -724,14 +735,26 @@ class Registry:
             # off the freshly imported module, which runs the module's code, and a
             # module that blows up part-way through must be skipped whole rather than
             # half-registered.
-            # Per (library, label): discovery produces the same classes for each,
-            # but under that pair's categorisation, so what counts as "discovery
-            # already reproduced this" differs per pair.
+            # Per (library, label), and only the pairs a fill established see
+            # discovery's classes (SWE-35). A pair contributed by an explicit
+            # register_lazy gets an empty discovery list, so nothing is "already
+            # reproduced" there and its own entry is carried forward instead.
+            # ``pending`` is filtered to the pair as well, so an entry is considered
+            # once rather than once per pair.
             carried = {
                 pair: cls.__carry_forward_lazy_entries(
-                    module, module_name, found, pair[0], pair[1], pending
+                    module,
+                    module_name,
+                    found if from_fill else [],
+                    pair[0],
+                    pair[1],
+                    [
+                        entry
+                        for entry in pending
+                        if (entry.library, entry.label) == pair
+                    ],
                 )
-                for pair in categories
+                for pair, (_, from_fill) in categories.items()
             }
         except Exception as error:
             # Same contract as the eager path, whatever was raised: the module is
@@ -756,19 +779,22 @@ class Registry:
             # Another thread may have resolved this module while the import ran. Its
             # entries are already reconciled, so dropping and re-registering is
             # harmless -- register() dedupes by identity -- but the drop has to see
-            # the registry as it is now, not as it was when claimed.
-            cls.__drop_lazy_entries(module_name)
+            # the registry as it is now, not as it was when claimed. Only the claimed
+            # snapshot is dropped: anything registered since belongs to a caller this
+            # resolution never saw (SWE-38).
+            cls.__drop_lazy_entries(module_name, only=pending)
 
-            for pair in categories:
-                for class_name, class_def in found:
-                    cls.register(
-                        key=class_name.lower(),
-                        class_def=class_def,
-                        library=pair[0],
-                        label=pair[1],
-                        attribute=class_name,
-                        module=module_name,
-                    )
+            for pair, (_, from_fill) in categories.items():
+                if from_fill:
+                    for class_name, class_def in found:
+                        cls.register(
+                            key=class_name.lower(),
+                            class_def=class_def,
+                            library=pair[0],
+                            label=pair[1],
+                            attribute=class_name,
+                            module=module_name,
+                        )
 
                 # After discovery, not before: an explicit registration for a class
                 # discovery also registers must end up alongside that entry, and this
@@ -885,7 +911,9 @@ class Registry:
         return carried
 
     @classmethod
-    def __drop_lazy_entries(cls, module_name: str) -> None:
+    def __drop_lazy_entries(
+        cls, module_name: str, only: list[Entry] | None = None
+    ) -> None:
         """
         Remove the unresolved entries belonging to one module.
 
@@ -899,29 +927,42 @@ class Registry:
 
         Args:
             module_name: Module whose lazy entries should go.
+            only: Drop just these entries, leaving any other lazy entry for the
+                module in place. Resolution passes the snapshot it claimed, so a
+                registration that arrived while the module was being imported
+                survives. None drops every lazy entry for the module, which is what
+                an unimportable module wants: none of them can ever resolve.
         """
-        remaining = [
-            entry
-            for entry in cls.__registry
-            if not (entry.is_lazy and entry.module == module_name)
-        ]
+        # Dropped by object identity when a set is given, because an entry that
+        # arrived after the claim phase took its snapshot must survive. Resolution
+        # used to drop every lazy entry for the module and re-register only from that
+        # snapshot, so a register_lazy landing during the import -- from another
+        # thread, or from the module's own body -- was destroyed outright, and the
+        # module was popped out of the pending index so nothing resolved it again
+        # (SWE-38). The eager path keeps such a registration, so this was also a
+        # lazy/eager parity break.
+        claimed = None if only is None else {id(entry) for entry in only}
+
+        remaining = []
+        module_still_lazy = False
+        for entry in cls.__registry:
+            if entry.is_lazy and entry.module == module_name:
+                if claimed is None or id(entry) in claimed:
+                    continue
+                module_still_lazy = True
+            remaining.append(entry)
+
         if len(remaining) != len(cls.__registry):
             cls.__registry[:] = remaining
             cls.__lookup.clear()
             cls.__lookup_keys.clear()
 
-        # A module with nothing left to resolve is not pending. It can be re-added
-        # while it is being resolved -- a module body calling register_lazy puts it
-        # back -- and the drop above then removes the entry that call created,
-        # stranding the index entry. ensure_resolved's "nothing pending" fast path
-        # then never fired again, so every total miss walked the sweep path and
-        # lazy="strict" cited a module with nothing to import (SWE-32).
-        #
-        # Unconditional: the filter above keeps exactly the entries that are not this
-        # module's lazy ones, so none can remain. Checking first was a full registry
-        # scan to confirm something already guaranteed -- O(n) per module, O(n squared)
-        # over a fill (SWE-34).
-        cls.__unresolved.pop(module_name, None)
+        # A module with nothing left to resolve is not pending (SWE-32). Decided in
+        # the same pass rather than by a second scan, which was O(n) per module and
+        # O(n squared) over a fill (SWE-34) -- and which is no longer merely
+        # redundant now that the drop is selective.
+        if not module_still_lazy:
+            cls.__unresolved.pop(module_name, None)
 
     @classmethod
     def __resync_seen(cls) -> None:
@@ -1300,7 +1341,7 @@ class Registry:
             # leave no trace in the source, and the sweep can only reach a module it
             # has been told about.
             cls.__unresolved.setdefault(name_of_package, {}).setdefault(
-                (library.lower(), label.lower()), 0
+                (library.lower(), label.lower()), (0, True)
             )
 
     @classmethod

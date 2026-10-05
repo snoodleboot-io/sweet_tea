@@ -26,5 +26,8 @@ section-order = ["future", "standard-library", "third-party", "first-party", "lo
 # Provenance fixtures (SWE-20): each module is written in the shape whose
 # discovery behaviour is under test.
 "tests/provenance_cases/*" = ["E402", "F401", "I001"]
+# Late-registration fixture (SWE-38): the module registers during its own
+# import, which is the shape under test.
+"tests/late_registration_cases/*" = ["E402", "I001"]
 # Audit fixtures: each module is written in a shape the audit must flag.
 "tests/lazy_audit_cases/*" = ["E402", "F401", "I001"]

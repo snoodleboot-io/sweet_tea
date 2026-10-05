@@ -395,6 +395,12 @@ uses, so a resolved module matches eager registration exactly — plus anything 
 by hand with `register_lazy`, which is carried forward rather than rebuilt (see
 [Registering one class lazily](#registering-one-class-lazily)).
 
+Registering one name registers one name. Resolving it imports its module, but the
+module's other classes are registered only under the `(library, label)` pairs a *fill*
+asked for — an alias does not drag its module's whole class list in behind it. And a
+registration made *while* a module is being imported, including from the module's own
+body, survives the resolution that triggered it.
+
 That difference is the point: a name the *scan* guessed at is overruled by what the
 module turned out to hold, while a name you *asked for* is kept. So a binding the
 scanner saw that leads to a class from another package — the `try: from otherlib import
