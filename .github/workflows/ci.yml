@@ -79,6 +79,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint-black, lint-ruff, lint-bandit, lint-mypy, lint-mkdocs]
     strategy:
+      # One version's infrastructure problem must not cancel the others: a cancelled
+      # job reports nothing, so a red run hid whether the remaining Pythons passed.
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
@@ -103,6 +106,14 @@ jobs:
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v4
+        # Coverage reporting is telemetry and must never gate correctness.
+        # fail_ci_if_error governs what the uploader does with an error it reports;
+        # it does not catch the action's own Node process throwing, which is how this
+        # actually fails (`Error: write EPROTO ... ssl3_read_bytes` — a TLS handshake
+        # against Codecov). That failed four runs across four branches while every
+        # test passed, each needing a by-hand check of the job steps to establish
+        # that nothing was wrong (SWE-33).
+        continue-on-error: true
         with:
           file: ./coverage.xml
           flags: unittests
