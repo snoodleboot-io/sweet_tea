@@ -20,12 +20,13 @@ which creates new instances each time, SingletonFactory returns the same
 registered instance.
 """
 
+import contextlib
 import copy
 import logging
 import math
 import threading
 import warnings
-from typing import Any, Dict
+from typing import Any, Dict, Iterator
 
 from pydantic import BaseModel
 
@@ -54,6 +55,11 @@ class SingletonFactory(BaseFactory):
     admitted by a per-key lock instead. Nor is it held while a configuration is judged
     for drift: that applies any declared configuration model, and a pydantic validator
     is arbitrary code on the same footing as a constructor (SWE-29).
+
+    Because a constructor may resolve or create, it may also — by mistake or by design
+    — ask for a singleton whose construction it is already inside. That is a circular
+    dependency, and this factory reports it as a :class:`SweetTeaError` naming the
+    cycle rather than blocking on a lock that can never be released (SWE-36).
     """
 
     # Threading lock for synchronizing operations
@@ -80,7 +86,31 @@ class SingletonFactory(BaseFactory):
     # dependency injection (SWE-22). These are created under __lock and held without
     # it, so exactly one thread constructs a given key while every other key and
     # every cache read proceeds unblocked.
+    #
+    # Never discarded, not even by clear(). A lock dropped while a thread held it was
+    # replaced by a fresh one for the same key on the next call, which admitted a
+    # second thread into a construction already running and produced two instances of
+    # a singleton (SWE-39). They are keyed by resolved cache key and so bounded by the
+    # registry, which is a small price for the guarantee the class exists to make.
     __construction_locks: Dict[tuple[str, str, str], threading.Lock] = {}
+
+    # The keys each thread is constructing, outermost first. Thread-local, so nothing
+    # guards it: a thread is the only reader and the only writer of its own stack.
+    # This is what catches the single-threaded shapes of SWE-36 — a constructor that
+    # reaches back for its own key, or for one further up its own chain — before the
+    # thread blocks forever on a lock it is already holding.
+    __construction_stack = threading.local()
+
+    # Who is constructing what, and what each thread has stopped to wait for: the
+    # construction lock's owner per key, as (thread id, thread name), and the key each
+    # blocked thread is waiting to be admitted to. Together they are a wait-for graph,
+    # which is the only way to see the shape of SWE-36 no single thread's own stack
+    # can show — two threads entering one cycle from opposite ends. Both are written
+    # and read under __lock, and that is also what keeps them consistent with each
+    # other: a thread walking the graph sees the state before a lock changed hands or
+    # the state after, never half of each.
+    __construction_owner: Dict[tuple[str, str, str], tuple[int, str]] = {}
+    __blocked_on: Dict[int, tuple[str, str, str]] = {}
 
     # Stands in for the comparison basis of a configuration a declared
     # ``__configuration__`` will not accept. Not a basis, and not undecidable either: a
@@ -116,7 +146,9 @@ class SingletonFactory(BaseFactory):
             The existing singleton instance, or a newly created and registered instance.
 
         Raises:
-            SweetTeaError: If the key is not found in the registry or filters don't match.
+            SweetTeaError: If the key is not found in the registry, filters don't
+                match, or the key is already being constructed by the calling thread
+                or by a thread this call would deadlock against (see SWE-36).
         """
         # Resolved before this factory's lock is taken. Resolution imports, and
         # taking both locks across an import is what let a module body that creates a
@@ -143,7 +175,7 @@ class SingletonFactory(BaseFactory):
             cls.__warn_on_configuration_drift(cache_key, entry, configuration)
             return cached_instance
 
-        with construction_lock:
+        with cls.__admit_construction(cache_key, construction_lock):
             # Re-checked now that this thread owns construction for the key: another
             # thread may have finished between the miss above and this point.
             with cls.__lock:
@@ -168,7 +200,11 @@ class SingletonFactory(BaseFactory):
 
             # No factory lock held here, by design: a constructor runs arbitrary code
             # and may itself resolve or create. The construction lock still admits
-            # exactly one thread per key, so the single-instance guarantee holds.
+            # exactly one thread per key, so the single-instance guarantee holds. A
+            # constructor that creates some *other* singleton is ordinary dependency
+            # injection and proceeds; one that comes back for this key is a cycle, and
+            # the admission above has it on this thread's stack so the nested call
+            # raises instead of blocking on the lock this thread holds (SWE-36).
             new_instance = cls._construct(entry, configuration)
 
             with cls.__lock:
@@ -179,6 +215,240 @@ class SingletonFactory(BaseFactory):
                 )
 
         return new_instance
+
+    @classmethod
+    @contextlib.contextmanager
+    def __admit_construction(
+        cls,
+        cache_key: tuple[str, str, str],
+        construction_lock: threading.Lock,
+    ) -> Iterator[None]:
+        """
+        Admit this thread to construct one key, or say why it never can.
+
+        Construction is admitted by a per-key lock, and a plain lock is the right tool
+        for the thing it guards — but only for threads that have something to wait for.
+        A thread that already holds the lock has not: a constructor reaching back into
+        :meth:`create` for the key it is being constructed under is asking for an
+        instance that cannot exist until it returns. Blocking there was a hang with no
+        traceback and no timeout, which is the one failure mode a container must never
+        hand a consumer, since there is nothing left to debug (SWE-36). Circular
+        dependencies are the consumer's mistake; reporting them is this factory's job.
+
+        Two shapes are detected, by the two things that can see them:
+
+        - **Within one thread** — the self-referential constructor, and the longer
+          ``alpha -> beta -> alpha`` chain — against this thread's own construction
+          stack, before any lock is touched. No shared state is read, so the check
+          costs a list scan whose length is the depth of the dependency graph.
+        - **Across threads** — two threads entering one cycle from opposite ends, each
+          holding the lock the other needs. No thread's own stack can see this, so a
+          thread about to block registers what it is waiting for and walks the wait-for
+          graph. Whichever of the two registers second finds the chain closed and
+          raises; the other is freed when that one unwinds, and then meets the cycle on
+          its own stack.
+
+        The alternative for the cross-thread case was acquiring with a timeout and
+        calling expiry a deadlock. That was rejected: any timeout short enough to
+        diagnose a deadlock promptly is one a legitimately slow constructor — a
+        connection pool, a model load, a cold cache on a loaded CI box — can exceed,
+        and turning a correct program into a failing one to diagnose an incorrect one
+        is the wrong trade. The wait-for graph needs no number chosen, reports the
+        instant the cycle closes rather than seconds later, and names the threads and
+        keys involved. What it cannot see is a cycle that leaves this factory — a
+        constructor blocking on a lock of the consumer's own, held by a thread waiting
+        on a singleton — which no bookkeeping here could see either; that remains a
+        documented limitation rather than a guess enforced by a timer.
+
+        Args:
+            cache_key: Identity of the entry being constructed.
+            construction_lock: The key's construction lock, already created under the
+                factory's lock by the caller.
+
+        Yields:
+            None, with the construction lock held and this thread recorded as the key's
+            constructor.
+
+        Raises:
+            SweetTeaError: When this thread is already constructing the key, or when
+                waiting for it would close a cycle of threads that can never finish.
+        """
+        stack = cls.__keys_under_construction()
+        if cache_key in stack:
+            cycle = stack[stack.index(cache_key) :] + [cache_key]
+            raise SweetTeaError(
+                f"Circular singleton construction for key '{cache_key[0]}': "
+                f"{' -> '.join(cls.__describe(key) for key in cycle)}. A constructor "
+                f"asked SingletonFactory for a singleton whose construction it is "
+                f"already inside, so the instance it wants cannot exist yet. Break the "
+                f"cycle: take the collaborator as a constructor argument, or look it up "
+                f"after construction rather than during it."
+            )
+
+        identity = threading.get_ident()
+        if not construction_lock.acquire(blocking=False):
+            # Another thread is constructing this key. Ordinarily that is contention
+            # and this thread simply waits for it; it is a deadlock only if that thread
+            # is itself waiting, directly or through others, on a key this thread is
+            # constructing.
+            cls.__block_until_admitted(cache_key, construction_lock, identity)
+
+        with cls.__lock:
+            cls.__construction_owner[cache_key] = (
+                identity,
+                threading.current_thread().name,
+            )
+        stack.append(cache_key)
+        try:
+            yield
+        finally:
+            # Unwound in the reverse order, and unconditionally: a constructor that
+            # raises must leave the key constructible again, so the next caller
+            # re-enters the constructor and sees the real exception rather than a
+            # report of a cycle that is no longer in progress.
+            stack.pop()
+            with cls.__lock:
+                cls.__construction_owner.pop(cache_key, None)
+            construction_lock.release()
+
+    @classmethod
+    def __block_until_admitted(
+        cls,
+        cache_key: tuple[str, str, str],
+        construction_lock: threading.Lock,
+        identity: int,
+    ) -> None:
+        """
+        Wait for another thread's construction of a key, unless that would deadlock.
+
+        The wait is registered before it is judged, and both happen in one hold of the
+        factory's lock. That ordering is what makes the detection complete rather than
+        best-effort: two threads closing a cycle each register, and the one that
+        registers second necessarily sees the other's registration, so the cycle cannot
+        be missed by both. The lock is released before blocking, since blocking under it
+        is the lock inversion SWE-22 exists to prevent.
+
+        Args:
+            cache_key: The key this thread wants to construct.
+            construction_lock: Its construction lock, currently held by another thread.
+            identity: This thread's id, as :func:`threading.get_ident` reports it.
+
+        Raises:
+            SweetTeaError: When the wait would close a cycle of threads waiting on one
+                another's constructions.
+        """
+        with cls.__lock:
+            cls.__blocked_on[identity] = cache_key
+            chain = cls.__deadlock_chain(cache_key, identity)
+            if chain is not None:
+                del cls.__blocked_on[identity]
+
+        if chain is not None:
+            raise SweetTeaError(
+                f"Deadlocked singleton construction for key '{cache_key[0]}': "
+                f"{' -> '.join(chain + [cls.__describe(cache_key)])}. Two or more "
+                f"threads are each constructing a singleton another of them is waiting "
+                f"for, so none of them can finish. This is the same circular "
+                f"dependency as the single-threaded case, entered from both ends at "
+                f"once: break the cycle rather than retrying, since a retry will "
+                f"deadlock again."
+            )
+
+        try:
+            construction_lock.acquire()
+        finally:
+            # Cleared whether or not the wait succeeded, so a thread that is running
+            # again is never read as still blocked.
+            with cls.__lock:
+                cls.__blocked_on.pop(identity, None)
+
+    @classmethod
+    def __deadlock_chain(
+        cls, wanted: tuple[str, str, str], identity: int
+    ) -> list[str] | None:
+        """
+        Follow the wait-for graph from a key, looking for a way back to this thread.
+
+        Must be called with the factory's lock held and this thread's wait already
+        registered, so that what the walk reads is the whole graph at one instant.
+
+        Each hop asks the same two questions: who is constructing the key being waited
+        for, and is that thread itself waiting? An owner that is running, or a key with
+        no owner at all, ends the walk — the chain terminates in work that can finish,
+        which is contention and not deadlock. An owner that turns out to be *this*
+        thread closes the circle: this thread cannot release what it is constructing
+        while it waits, so nothing in the chain can ever proceed.
+
+        Args:
+            wanted: The key this thread is waiting to construct.
+            identity: This thread's id, as :func:`threading.get_ident` reports it.
+
+        Returns:
+            The chain of keys and the threads holding them, as text ready to join, when
+            waiting would deadlock; None when the wait is ordinary contention.
+        """
+        chain: list[str] = []
+        key = wanted
+        # At most one hop per thread that could be holding a construction lock: a walk
+        # longer than that has revisited a thread, which with every edge recorded under
+        # one lock cannot happen without passing through this thread first.
+        for _ in range(len(cls.__construction_owner) + 1):
+            owner = cls.__construction_owner.get(key)
+            if owner is None:
+                return None
+
+            owner_identity, owner_name = owner
+            chain.append(f"{cls.__describe(key)} (being constructed on {owner_name})")
+            if owner_identity == identity:
+                return chain
+
+            blocked_on = cls.__blocked_on.get(owner_identity)
+            if blocked_on is None:
+                return None
+            key = blocked_on
+
+        return None
+
+    @classmethod
+    def __keys_under_construction(cls) -> list[tuple[str, str, str]]:
+        """
+        Get the calling thread's own stack of keys it is part-way through constructing.
+
+        Thread-local and therefore lock-free: the list is created on first use by the
+        thread that will be its only reader and only writer.
+
+        Returns:
+            The live list, outermost key first, to be appended to and popped by the
+            calling thread alone.
+        """
+        stack: list[tuple[str, str, str]] | None = getattr(
+            cls.__construction_stack, "keys", None
+        )
+        if stack is None:
+            stack = []
+            cls.__construction_stack.keys = stack
+        return stack
+
+    @classmethod
+    def __describe(cls, cache_key: tuple[str, str, str]) -> str:
+        """
+        Name a cache key the way a reader of a cycle message needs to see it.
+
+        The key alone reads best and is almost always enough, but two entries can share
+        a key and differ by library or label — which is exactly the pair a cycle message
+        would otherwise render as ``alpha -> alpha`` — so those are spelled out when
+        they are set.
+
+        Args:
+            cache_key: Identity of a registry entry, as (key, library, label).
+
+        Returns:
+            A short description for a diagnostic message.
+        """
+        key, library, label = cache_key
+        if not library and not label:
+            return key
+        return f"{key}[{library}:{label}]"
 
     @classmethod
     def __comparable(
@@ -471,14 +741,20 @@ class SingletonFactory(BaseFactory):
         Remove all registered instances.
 
         This is primarily useful for testing or resetting the factory state.
+
+        The construction locks are deliberately left in place. Dropping them could not
+        strand a construction — a lock a thread holds stays alive through that thread's
+        own reference — but that was never the danger. The danger was the *second* lock:
+        with the mapping emptied, the next caller for a key under construction created a
+        fresh lock for it, took that one unopposed, and ran the constructor a second time
+        in parallel with the first. Two instances of a singleton, from a reset API, is
+        the one outcome this class must not have (SWE-39). The locks are keyed by
+        resolved cache key and so bounded by the registry, which costs little to keep.
         """
         with cls.__lock:
             count = len(cls.__instances)
             cls.__instances.clear()
             cls.__configurations.clear()
-            # A lock a thread is currently holding stays alive through that thread's
-            # own reference, so dropping the mapping cannot strand a construction.
-            cls.__construction_locks.clear()
             cls._logger.info(f"Cleared {count} singleton instances")
 
     @classmethod

@@ -294,11 +294,51 @@ What this means in practice:
   behind them.
 - **A singleton is still constructed exactly once.** Construction is admitted by a
   per-key lock, so one thread builds a given key while every other key and every cache
-  read proceeds. Verified with 32 threads against four spellings of one key: one
-  instance, one constructor call.
+  read proceeds. Verified with 32 threads against four spellings of one key, and again
+  over 96,000 `create()` calls across 48 threads and four keys: one instance and one
+  constructor invocation per key, with never more than one constructor for a key
+  running at a time. That holds across a concurrent `clear()`, which is why `clear()`
+  keeps the per-key construction locks it used to discard.
 
 A constructor that resolves another registered class, or a module body that creates a
 singleton, is therefore safe. Neither was before.
+
+### Circular singleton dependencies
+
+A constructor may resolve or create, so it may also ask for a singleton whose
+construction it is already inside — directly, or round a chain of collaborators:
+
+```python
+class Alpha:
+    def __init__(self):
+        self.beta = SingletonFactory.create("beta")    # whose __init__ creates "alpha"
+```
+
+That instance cannot exist until the constructor asking for it returns, so there is
+nothing to wait for. `SingletonFactory` raises instead, naming the path round the
+cycle:
+
+```
+SweetTeaError: Circular singleton construction for key 'alpha': alpha -> beta ->
+alpha. A constructor asked SingletonFactory for a singleton whose construction it is
+already inside ...
+```
+
+Circular dependencies are a mistake in the calling code; reporting them is the
+container's job. Break the cycle by taking the collaborator as a constructor argument,
+or by looking it up after construction rather than during it.
+
+Two threads can also enter one cycle from opposite ends, each holding the construction
+lock the other needs. No thread's own call stack shows that, so the factory tracks which
+thread is constructing which key and what each blocked thread is waiting for; a thread
+whose wait would close the circle is refused with `Deadlocked singleton construction`
+rather than blocked. There is no timeout involved, so an honestly slow constructor — a
+connection pool, a model load — is never mistaken for a deadlock, however long it takes.
+
+The one cycle this cannot see is one that leaves the factory: a constructor blocking on
+a lock of your own that is held by a thread waiting on a singleton. Nothing inside
+`sweet_tea` can observe that lock, so it remains a genuine deadlock; keep your own locks
+out of constructors that resolve.
 
 ## Lazy Registration
 
