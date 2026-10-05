@@ -77,6 +77,12 @@ class TestGuaranteesUnderContention(TestCase):
         """The singleton guarantee no longer rests on a lock held across __init__."""
         self.assertEqual(run_scenario("singleton_identity_under_contention"), "OK")
 
+    def test_concurrent_create_does_not_corrupt_the_registry(self):
+        """A reader must not change what the registry reasons about (SWE-37)."""
+        self.assertEqual(
+            run_scenario("concurrent_create_keeps_entries_intact", timeout=300), "OK"
+        )
+
     def test_unrelated_imports_overlap(self):
         """Imports are I/O-bound and must not queue behind one another."""
         verdict = run_scenario("imports_overlap")
