@@ -152,6 +152,7 @@ class Registry:
         library: str = "",
         label: str = "",
         attribute: str = "",
+        module: str = "",
     ) -> None:
         """
         Register a class with the registry.
@@ -165,11 +166,18 @@ class Registry:
                 passes it so a snapshot can name the class the way it was found —
                 ``Mismatch = type("InnerName", ...)`` is reachable as ``Mismatch`` and
                 not as its ``__name__``. Omitted, export falls back to ``__qualname__``.
+            module: Module the class is *bound to*, when known — which is not always
+                where the class says it lives. A class built by a helper elsewhere in
+                the package carries that helper's ``__module__`` (``type()`` stamps it
+                from the calling frame), so a snapshot naming it that way names a pair
+                that does not exist (SWE-24). Discovery passes the module it was
+                walking. Omitted, this falls back to ``class_def.__module__``, which is
+                the best available answer for a direct ``register`` call.
         """
         new_entry = Entry(
             key=key.lower(),
             class_def=class_def,
-            module=getattr(class_def, "__module__", ""),
+            module=module or getattr(class_def, "__module__", ""),
             attribute=attribute,
             library=library.lower(),
             label=label.lower(),
@@ -656,6 +664,7 @@ class Registry:
                     library=library,
                     label=label,
                     attribute=class_name,
+                    module=module_name,
                 )
 
             # After discovery, not before: an explicit registration for a class
@@ -668,6 +677,7 @@ class Registry:
                     library=entry.library,
                     label=entry.label,
                     attribute=entry.attribute,
+                    module=entry.module,
                 )
 
     @classmethod
@@ -1443,6 +1453,7 @@ class Registry:
                     library=library,
                     label=label,
                     attribute=class_name,
+                    module=name_of_package,
                 )
         except Exception:
             error_message = traceback.format_exc()
