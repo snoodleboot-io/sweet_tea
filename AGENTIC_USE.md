@@ -144,6 +144,16 @@ class CacheClient:
 # Factory.create(key="CacheClient", configuration={"timeout": 30}) -> CacheClient
 ```
 
+### Threads
+
+**Contract:** the registry's lock covers its own state only. It is never held across a
+module import, and `SingletonFactory`'s lock is never held across a constructor, so a
+module body that reads the registry and a constructor that resolves a collaborator are
+both safe. A singleton is still built exactly once per key.
+
+**Must not:** assume a fill is atomic. Concurrent fills and lookups interleave; the
+registry is consistent at every point, but a reader may observe a fill in progress.
+
 ### Lazy filling
 
 **Contract:** `Registry.fill_registry(lazy=True)` registers the same keys by parsing

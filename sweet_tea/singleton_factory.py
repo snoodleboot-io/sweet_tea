@@ -44,7 +44,11 @@ class SingletonFactory(BaseFactory):
     - Dependency injection containers
     - Caching expensive-to-create objects
 
-    Thread-safe: All operations are synchronized to prevent race conditions.
+    Thread-safe: the cache is synchronized, and exactly one thread constructs the
+    instance for a given key. The factory's lock is **not** held while a constructor
+    runs — a constructor may itself resolve or create, and holding this lock across
+    that inverted the lock order against the registry (SWE-22) — so construction is
+    admitted by a per-key lock instead.
     """
 
     # Threading lock for synchronizing operations
@@ -60,6 +64,14 @@ class SingletonFactory(BaseFactory):
     # so a later call passing a different one can be told that it had no effect (see
     # SWE-14); the instance itself is never rebuilt.
     __configurations: Dict[tuple[str, str, str], dict[str, Any] | None] = {}
+
+    # One lock per cache key, guarding construction of that key's instance. The
+    # factory's own lock cannot do this job: holding it across a constructor runs
+    # arbitrary code under it, and a constructor that looks something up is ordinary
+    # dependency injection (SWE-22). These are created under __lock and held without
+    # it, so exactly one thread constructs a given key while every other key and
+    # every cache read proceeds unblocked.
+    __construction_locks: Dict[tuple[str, str, str], threading.Lock] = {}
 
     # Logger instance
     _logger = logging.getLogger(__name__)
@@ -91,27 +103,45 @@ class SingletonFactory(BaseFactory):
         Raises:
             SweetTeaError: If the key is not found in the registry or filters don't match.
         """
-        with cls.__lock:
-            # Resolve through the shared path first, so the cache is keyed on the entry
-            # that would be instantiated rather than on however the caller spelled it.
-            # Resolution happens inside the lock so two threads cannot both miss the
-            # cache and each construct an instance.
-            entry = cls._select_entry(cls._find_entries(key), key, library, label)
-            cache_key = (entry.key, entry.library, entry.label)
+        # Resolved before this factory's lock is taken. Resolution imports, and
+        # taking both locks across an import is what let a module body that creates a
+        # singleton deadlock against a singleton whose constructor looks one up
+        # (SWE-22). The cache is still keyed on the resolved entry rather than on the
+        # caller's spelling, which is what makes every spelling share one slot
+        # (SWE-5).
+        entry = cls._select_entry(cls._find_entries(key), key, library, label)
+        cache_key = (entry.key, entry.library, entry.label)
 
-            # Return existing instance if available
+        with cls.__lock:
             if cache_key in cls.__instances:
                 cls.__warn_on_configuration_drift(cache_key, configuration)
                 return cls.__instances[cache_key]
 
+            construction_lock = cls.__construction_locks.setdefault(
+                cache_key, threading.Lock()
+            )
+
+        with construction_lock:
+            # Re-checked now that this thread owns construction for the key: another
+            # thread may have finished between the miss above and this point.
+            with cls.__lock:
+                if cache_key in cls.__instances:
+                    cls.__warn_on_configuration_drift(cache_key, configuration)
+                    return cls.__instances[cache_key]
+
+            # No factory lock held here, by design: a constructor runs arbitrary code
+            # and may itself resolve or create. The construction lock still admits
+            # exactly one thread per key, so the single-instance guarantee holds.
             new_instance = cls._construct(entry, configuration)
 
-            # Register the new instance as a singleton
-            cls.__instances[cache_key] = new_instance
-            cls.__configurations[cache_key] = cls.__comparable(configuration)
-            cls._logger.info(f"Created and registered singleton instance: {entry.key}")
+            with cls.__lock:
+                cls.__instances[cache_key] = new_instance
+                cls.__configurations[cache_key] = cls.__comparable(configuration)
+                cls._logger.info(
+                    f"Created and registered singleton instance: {entry.key}"
+                )
 
-            return new_instance
+        return new_instance
 
     @classmethod
     def __comparable(
@@ -195,6 +225,9 @@ class SingletonFactory(BaseFactory):
             count = len(cls.__instances)
             cls.__instances.clear()
             cls.__configurations.clear()
+            # A lock a thread is currently holding stays alive through that thread's
+            # own reference, so dropping the mapping cannot strand a construction.
+            cls.__construction_locks.clear()
             cls._logger.info(f"Cleared {count} singleton instances")
 
     @classmethod

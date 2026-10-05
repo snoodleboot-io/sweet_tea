@@ -49,11 +49,17 @@ class Registry:
     The registry supports typed lookups for abstract factories, allowing filtering
     by inheritance hierarchy.
 
-    Thread-safe: All registry operations are synchronized to prevent race conditions
-    in multi-threaded environments.
+    Thread-safe: every read and write of the registry's own state is synchronized.
+    The lock guards that state and nothing else — in particular it is **not** held
+    while a module is imported, because running a module body under it deadlocks
+    against CPython's per-module import locks (SWE-22). Concurrent fills and
+    resolutions therefore interleave, which is safe: registration dedupes by
+    identity, and resolution re-reads the registry after importing rather than
+    trusting what it saw before.
     """
 
-    # Threading lock for synchronizing registry operations
+    # Threading lock for the registry's own state. Never held across an import; see
+    # the class docstring and __resolve_module.
     __lock = threading.RLock()
 
     # This is the registry of packages
@@ -262,58 +268,74 @@ class Registry:
             SweetTeaError: When a sweep is needed but the registry was filled with
                 lazy="strict".
         """
+        wanted = {key.lower() for key in keys}
+
+        # Each phase reads state under the lock and then releases it, because
+        # __resolve_module imports and must not be called holding it (SWE-22). State
+        # can therefore change between phases; every phase re-reads rather than
+        # trusting what the previous one saw.
         with cls.__lock:
             if not cls.__unresolved:
                 return
+            pending = sorted(
+                {
+                    entry.module
+                    for entry in cls.__registry
+                    if entry.is_lazy and entry.key in wanted
+                }
+            )
 
-            wanted = {key.lower() for key in keys}
-            pending = {
-                entry.module
-                for entry in cls.__registry
-                if entry.is_lazy and entry.key in wanted
-            }
-            for module_name in sorted(pending):
-                cls.__resolve_module(module_name)
+        for module_name in pending:
+            cls.__resolve_module(module_name)
 
+        with cls.__lock:
             if not sweep or not cls.__unresolved:
                 return
             if any(entry.key in wanted for entry in cls.__registry):
                 return
-
             # Before importing anything, harvest the pending modules something else
             # already imported — a module pulled in as a side effect of resolving
             # another is in sys.modules but still unreconciled, so a class it creates
             # at runtime is invisible. Reconciling those costs no imports and often
             # avoids the sweep entirely.
-            for module_name in sorted(cls.__unresolved):
-                if module_name in sys.modules:
-                    cls.__resolve_module(module_name)
+            already_imported = sorted(
+                name for name in cls.__unresolved if name in sys.modules
+            )
 
+        for module_name in already_imported:
+            cls.__resolve_module(module_name)
+
+        with cls.__lock:
             if not cls.__unresolved:
                 return
             if any(entry.key in wanted for entry in cls.__registry):
                 return
 
             requested = ", ".join(sorted(wanted))
-            if cls.__no_sweep:
-                raise SweetTeaError(
-                    f"No entry for {requested} and the registry was filled with "
-                    f'lazy="strict", so the remaining {len(cls.__unresolved)} module(s) '
-                    f"will not be imported to look for it. Name the module that "
-                    f"defines it in fill_registry(eager=[...]) if it is created at "
-                    f"runtime rather than by a class statement."
-                )
+            pending_count = len(cls.__unresolved)
+            no_sweep = cls.__no_sweep
 
-            # Reported, not silent: a sweep undoes the saving lazy filling exists for,
-            # so the caller needs to know which key caused it.
-            warnings.warn(
-                f"Importing {len(cls.__unresolved)} remaining module(s) to look for "
-                f"{requested}: no lazily registered name matched. Add the defining "
-                f"module to fill_registry(eager=[...]) to avoid this.",
-                SweetTeaWarning,
-                stacklevel=2,
+        # Out of the lock before raising, warning or sweeping: resolve_all imports,
+        # and a warning filter that escalates must not unwind holding the registry.
+        if no_sweep:
+            raise SweetTeaError(
+                f"No entry for {requested} and the registry was filled with "
+                f'lazy="strict", so the remaining {pending_count} module(s) '
+                f"will not be imported to look for it. Name the module that "
+                f"defines it in fill_registry(eager=[...]) if it is created at "
+                f"runtime rather than by a class statement."
             )
-            cls.resolve_all()
+
+        # Reported, not silent: a sweep undoes the saving lazy filling exists for,
+        # so the caller needs to know which key caused it.
+        warnings.warn(
+            f"Importing {pending_count} remaining module(s) to look for "
+            f"{requested}: no lazily registered name matched. Add the defining "
+            f"module to fill_registry(eager=[...]) to avoid this.",
+            SweetTeaWarning,
+            stacklevel=2,
+        )
+        cls.resolve_all()
 
     @classmethod
     def skipped(cls) -> dict[str, str]:
@@ -483,8 +505,7 @@ class Registry:
                 class under that name — the case of a provisional guess that turned out
                 to be something else.
         """
-        with cls.__lock:
-            cls.__resolve_module(module)
+        cls.__resolve_module(module)
 
         try:
             module_object = importlib.import_module(module)
@@ -514,8 +535,15 @@ class Registry:
         Use when an exact view of the registry matters more than the deferral — for
         example before reading :meth:`entries` for introspection.
         """
-        with cls.__lock:
-            for module_name in sorted(cls.__unresolved):
+        # Snapshot under the lock, resolve without it: __resolve_module imports.
+        # A module another thread resolves meanwhile is a no-op here, and one added
+        # meanwhile is picked up by the loop's re-read.
+        while True:
+            with cls.__lock:
+                pending = sorted(cls.__unresolved)
+            if not pending:
+                return
+            for module_name in pending:
                 cls.__resolve_module(module_name)
 
     @classmethod
@@ -543,25 +571,39 @@ class Registry:
         built. It is popped from the pending index either way, so an import known to
         fail is attempted once rather than once per lookup.
 
-        The caller must hold ``__lock``.
+        The caller must NOT hold ``__lock``. Importing a module runs its body, and
+        running third-party code under the registry's lock is what deadlocked against
+        CPython's per-module import locks: a thread importing such a module holds its
+        import lock and wants the registry's, while this held the registry's and
+        wanted the import lock (SWE-22). So the work is three phases — claim the
+        module under the lock, import and read it with no lock held, apply the result
+        under the lock again — and the last phase tolerates another thread having
+        resolved the same module in between.
 
         Args:
             module_name: Dotted path of the module to import.
         """
-        if module_name not in cls.__unresolved:
-            return
+        with cls.__lock:
+            if module_name not in cls.__unresolved:
+                return
 
-        library, label, scanned = cls.__unresolved.pop(module_name)
+            library, label, scanned = cls.__unresolved.pop(module_name)
 
-        # The documented reset clears __registry directly, which can leave this index
-        # holding modules whose entries are gone. Importing them would resurrect
-        # registrations the caller just cleared. A module that contributed nothing to
-        # begin with (scanned == 0) is exempt: it has no entries to have lost, and is
-        # exactly the case the sweep exists for.
-        if scanned and not any(
-            entry.is_lazy and entry.module == module_name for entry in cls.__registry
-        ):
-            return
+            # Snapshotted while the lock is held: the import below runs without it,
+            # and carry-forward must not read live state.
+            pending = [
+                entry
+                for entry in cls.__registry
+                if entry.is_lazy and entry.module == module_name
+            ]
+
+            # The documented reset clears __registry directly, which can leave this index
+            # holding modules whose entries are gone. Importing them would resurrect
+            # registrations the caller just cleared. A module that contributed nothing to
+            # begin with (scanned == 0) is exempt: it has no entries to have lost, and is
+            # exactly the case the sweep exists for.
+            if scanned and not pending:
+                return
 
         try:
             module = importlib.import_module(module_name)
@@ -579,7 +621,7 @@ class Registry:
             # module that blows up part-way through must be skipped whole rather than
             # half-registered.
             carried = cls.__carry_forward_lazy_entries(
-                module, module_name, found, library, label
+                module, module_name, found, library, label, pending
             )
         except Exception as error:
             # Same contract as the eager path, whatever was raised: the module is
@@ -593,32 +635,40 @@ class Registry:
             # warnings.simplefilter("error", SweetTeaWarning) the warning leaves
             # through this frame, and entries pointing at a module now known to be
             # unimportable must not be left behind for the next lookup to retry.
-            cls.__drop_lazy_entries(module_name)
+            with cls.__lock:
+                cls.__drop_lazy_entries(module_name)
+            # Reported outside the lock: a filter escalating this warning to an
+            # exception unwinds through here, and must not do so holding the registry.
             cls.__skip_module(module_name, error)
             return
 
-        cls.__drop_lazy_entries(module_name)
+        with cls.__lock:
+            # Another thread may have resolved this module while the import ran. Its
+            # entries are already reconciled, so dropping and re-registering is
+            # harmless -- register() dedupes by identity -- but the drop has to see
+            # the registry as it is now, not as it was when claimed.
+            cls.__drop_lazy_entries(module_name)
 
-        for class_name, class_def in found:
-            cls.register(
-                key=class_name.lower(),
-                class_def=class_def,
-                library=library,
-                label=label,
-                attribute=class_name,
-            )
+            for class_name, class_def in found:
+                cls.register(
+                    key=class_name.lower(),
+                    class_def=class_def,
+                    library=library,
+                    label=label,
+                    attribute=class_name,
+                )
 
-        # After discovery, not before: an explicit registration for a class discovery
-        # also registers must end up alongside that entry, and registering in this
-        # order keeps the discovered keys where they have always been in __registry.
-        for entry, class_def in carried:
-            cls.register(
-                key=entry.key,
-                class_def=class_def,
-                library=entry.library,
-                label=entry.label,
-                attribute=entry.attribute,
-            )
+            # After discovery, not before: an explicit registration for a class
+            # discovery also registers must end up alongside that entry, and this
+            # order keeps the discovered keys where they have always been.
+            for entry, class_def in carried:
+                cls.register(
+                    key=entry.key,
+                    class_def=class_def,
+                    library=entry.library,
+                    label=entry.label,
+                    attribute=entry.attribute,
+                )
 
     @classmethod
     def __carry_forward_lazy_entries(
@@ -628,6 +678,7 @@ class Registry:
         found: list[tuple[str, type]],
         library: str,
         label: str,
+        pending: list[Entry],
     ) -> list[tuple[Entry, type]]:
         """
         Resolve the lazy entries for a module that discovery will not re-register.
@@ -665,8 +716,11 @@ class Registry:
         registered it. Keeping an explicitly requested alias is worth more than
         matching the eager fill on a name the scanner had to guess at anyway.
 
-        The caller must hold ``__lock``, and must call this before
-        :meth:`__drop_lazy_entries` removes the entries being read.
+        The caller must NOT hold ``__lock``: this reads attributes off the module,
+        which runs its code, and no third-party code may run under the registry's
+        lock (SWE-22). It therefore works from ``pending`` — a snapshot of the
+        module's lazy entries taken while the lock was held — rather than reading the
+        live registry.
 
         Args:
             module: The freshly imported module.
@@ -674,6 +728,7 @@ class Registry:
             found: Discovery's ``(attribute name, class)`` pairs for it.
             library: Library the module's lazy entries were filled under.
             label: Label the module's lazy entries were filled under.
+            pending: The module's lazy entries, as they stood when it was claimed.
 
         Returns:
             ``(entry, class)`` pairs to re-register, in registry order.
@@ -683,9 +738,7 @@ class Registry:
         reproduced = {(class_name.lower(), library, label) for class_name, _ in found}
 
         carried: list[tuple[Entry, type]] = []
-        for entry in cls.__registry:
-            if not (entry.is_lazy and entry.module == module_name):
-                continue
+        for entry in pending:
             if (entry.key, entry.library, entry.label) in reproduced:
                 continue
 
@@ -815,105 +868,107 @@ class Registry:
             )
         if lazy == "strict":
             cls.__no_sweep = True
+        # Deliberately not holding __lock across the walk. The walk imports, and
+        # holding the registry's lock while a module body runs is what deadlocked
+        # against CPython's per-module import locks -- a thread importing one of
+        # these modules holds its import lock and wants the registry's, while the
+        # fill held the registry's and wanted the import lock (SWE-22). Nothing
+        # here mutates registry state directly: register, register_lazy and the
+        # skip record each take the lock for their own write, and concurrent fills
+        # interleave safely because registration dedupes by identity.
+        # Determine the path to scan
+        if path is None:
+            _module = inspect.getmodule(inspect.stack()[1][0])
+            if _module is None or _module.__file__ is None:
+                raise SweetTeaError("Cannot determine module path automatically")
+            path = str(Path(_module.__file__).parent)
+
+        # Ensure path is a string
+        path_str = str(path)
+
+        # Make sure the root module is correctly specified
+        if module is None:
+            module = os.path.basename(path_str)
+
+        if not library:
+            library = module
+
+        # Location of package
+        pkg_dir = path_str
+
+        # Remember the tree so a snapshot can record what it was built from. Only
+        # roots are kept: this method recurses into subpackages, and a module whose
+        # ancestor is already recorded is part of that ancestor's walk. Judged by
+        # ancestry rather than a depth counter so an exception mid-walk cannot leave
+        # the bookkeeping wrong.
         with cls.__lock:
-            # Determine the path to scan
-            if path is None:
-                _module = inspect.getmodule(inspect.stack()[1][0])
-                if _module is None or _module.__file__ is None:
-                    raise SweetTeaError("Cannot determine module path automatically")
-                path = str(Path(_module.__file__).parent)
-
-            # Ensure path is a string
-            path_str = str(path)
-
-            # Make sure the root module is correctly specified
-            if module is None:
-                module = os.path.basename(path_str)
-
-            if not library:
-                library = module
-
-            # Location of package
-            pkg_dir = path_str
-
-            # Remember the tree so a snapshot can record what it was built from. Only
-            # roots are kept: this method recurses into subpackages, and a module whose
-            # ancestor is already recorded is part of that ancestor's walk. Judged by
-            # ancestry rather than a depth counter so an exception mid-walk cannot leave
-            # the bookkeeping wrong.
             if not any(
                 module == filled or module.startswith(f"{filled}.")
                 for filled in cls.__fills
             ):
                 cls.__fills[module] = path_str
 
-            # Materialised once so the recursive calls below share a single tuple rather
-            # than re-consuming a caller-supplied iterator, which would be exhausted
-            # after the first subpackage.
-            exclude_patterns = tuple(exclude or ())
-            # "auto" is a mode rather than a glob, so it is separated from the
-            # patterns before matching and re-attached for the recursive call.
-            eager_values: tuple[str, ...] = (
-                (eager,) if isinstance(eager, str) else tuple(eager or ())
-            )
-            auto_eager = "auto" in eager_values
-            eager_patterns = tuple(
-                pattern for pattern in eager_values if pattern != "auto"
-            )
+        # Materialised once so the recursive calls below share a single tuple rather
+        # than re-consuming a caller-supplied iterator, which would be exhausted
+        # after the first subpackage.
+        exclude_patterns = tuple(exclude or ())
+        # "auto" is a mode rather than a glob, so it is separated from the
+        # patterns before matching and re-attached for the recursive call.
+        eager_values: tuple[str, ...] = (
+            (eager,) if isinstance(eager, str) else tuple(eager or ())
+        )
+        auto_eager = "auto" in eager_values
+        eager_patterns = tuple(pattern for pattern in eager_values if pattern != "auto")
 
-            # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
-            # module imports the module and registers it.
-            for name, is_a_package in cls.__iter_package_children(pkg_dir):
-                pkg_name = f"{module}.{name}"
-                if cls.__is_excluded(pkg_name, exclude_patterns):
-                    # Logged rather than dropped silently; an under-filled registry with
-                    # no explanation is the failure mode this whole area keeps hitting.
-                    cls.__logger.debug(
-                        f"Skipping {pkg_name}: matched an exclude pattern"
-                    )
-                    continue
+        # Loop over the modules. If it is a package, the make recursive call, otherwise for each non-package
+        # module imports the module and registers it.
+        for name, is_a_package in cls.__iter_package_children(pkg_dir):
+            pkg_name = f"{module}.{name}"
+            if cls.__is_excluded(pkg_name, exclude_patterns):
+                # Logged rather than dropped silently; an under-filled registry with
+                # no explanation is the failure mode this whole area keeps hitting.
+                cls.__logger.debug(f"Skipping {pkg_name}: matched an exclude pattern")
+                continue
 
-                if not is_a_package:
-                    source_file = os.path.join(pkg_dir, f"{name}.py")
-                    # An eager pattern, a non-Python module (C extension), or no lazy
-                    # request at all all mean: import it now, as before.
-                    fill_lazily = (
-                        bool(lazy)
-                        and not cls.__is_excluded(pkg_name, eager_patterns)
-                        and os.path.isfile(source_file)
-                    )
-                    if fill_lazily and auto_eager:
-                        findings = LazyAudit.audit_file(source_file, pkg_name)
-                        if findings:
-                            # Logged rather than warned: this is the mode working as
-                            # asked, not a problem the caller must act on.
-                            cls.__logger.debug(
-                                f"Filling {pkg_name} eagerly: {findings[0]}"
-                            )
-                            fill_lazily = False
-                            cls.__warn_if_unfixable(findings)
-                    if fill_lazily:
-                        cls.__scan_entry_to_registry(
-                            label=label,
-                            library=library,
-                            name_of_package=pkg_name,
-                            source_file=source_file,
-                        )
-                    else:
-                        cls.__add_entry_to_registry(
-                            label=label, library=library, name_of_package=pkg_name
-                        )
-                else:
-                    # Make recursive call to the
-                    cls.fill_registry(
-                        path=os.path.join(pkg_dir, name),
-                        module=pkg_name,
-                        library=library,
+            if not is_a_package:
+                source_file = os.path.join(pkg_dir, f"{name}.py")
+                # An eager pattern, a non-Python module (C extension), or no lazy
+                # request at all all mean: import it now, as before.
+                fill_lazily = (
+                    bool(lazy)
+                    and not cls.__is_excluded(pkg_name, eager_patterns)
+                    and os.path.isfile(source_file)
+                )
+                if fill_lazily and auto_eager:
+                    findings = LazyAudit.audit_file(source_file, pkg_name)
+                    if findings:
+                        # Logged rather than warned: this is the mode working as
+                        # asked, not a problem the caller must act on.
+                        cls.__logger.debug(f"Filling {pkg_name} eagerly: {findings[0]}")
+                        fill_lazily = False
+                        cls.__warn_if_unfixable(findings)
+                if fill_lazily:
+                    cls.__scan_entry_to_registry(
                         label=label,
-                        exclude=exclude_patterns,
-                        lazy=lazy,
-                        eager=eager_values if lazy else None,
+                        library=library,
+                        name_of_package=pkg_name,
+                        source_file=source_file,
                     )
+                else:
+                    cls.__add_entry_to_registry(
+                        label=label, library=library, name_of_package=pkg_name
+                    )
+            else:
+                # Make recursive call to the
+                cls.fill_registry(
+                    path=os.path.join(pkg_dir, name),
+                    module=pkg_name,
+                    library=library,
+                    label=label,
+                    exclude=exclude_patterns,
+                    lazy=lazy,
+                    eager=eager_values if lazy else None,
+                )
 
     @classmethod
     def __warn_if_unfixable(cls, findings: list[AuditFinding]) -> None:
@@ -1292,7 +1347,8 @@ class Registry:
 
         # Recorded before warning, so the record survives a caller who has turned
         # SweetTeaWarning into an error and will never see the return.
-        cls.__skipped[name_of_package] = reason
+        with cls.__lock:
+            cls.__skipped[name_of_package] = reason
         # stacklevel=3: this helper's own callers are internal, so the warning points
         # at whoever asked for the fill or the lookup, as it did when both paths
         # warned inline.

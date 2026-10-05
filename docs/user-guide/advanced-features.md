@@ -221,6 +221,35 @@ a numpy array, say — drift cannot be judged and nothing is said.
 Use `Factory` when each caller needs its own configuration, or
 `SingletonFactory.pop(key)` to discard the cached instance before building a new one.
 
+## Thread Safety
+
+The registry's lock guards the registry's own state. It is deliberately **not** held
+while a module is imported, and `SingletonFactory`'s lock is **not** held while a
+constructor runs.
+
+That matters because both used to be, and both deadlocked. Importing a module runs its
+body; if that body touches the registry — `Factory.create(...)` or `Registry.entries()`
+at module scope — then a thread importing it holds Python's per-module import lock and
+wants the registry's, while a fill or a lookup holds the registry's and wants the
+import lock. Neither ever proceeds, and because CPython's import deadlock detector only
+looks for cycles among import locks, nothing reports it.
+
+What this means in practice:
+
+- **Concurrent fills and lookups interleave.** Registration dedupes by identity, and
+  resolution re-reads the registry after importing rather than trusting what it saw
+  before, so interleaving is safe rather than merely tolerated.
+- **Imports overlap.** Four modules that each take 0.5s to import cost about 0.5s
+  across four threads, not 2s, and an unrelated `Registry.entries()` is not blocked
+  behind them.
+- **A singleton is still constructed exactly once.** Construction is admitted by a
+  per-key lock, so one thread builds a given key while every other key and every cache
+  read proceeds. Verified with 32 threads against four spellings of one key: one
+  instance, one constructor call.
+
+A constructor that resolves another registered class, or a module body that creates a
+singleton, is therefore safe. Neither was before.
+
 ## Lazy Registration
 
 `fill_registry` imports every module in the tree to find the classes in it. With
