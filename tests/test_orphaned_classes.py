@@ -26,6 +26,7 @@ def reset_registry() -> None:
     Registry._Registry__fills.clear()
     Registry._Registry__skipped.clear()
     Registry._Registry__strict_fills.clear()
+    Registry._Registry__loaded_sources.clear()
 
 
 class TestOrphanedClasses(TestCase):

@@ -99,6 +99,13 @@ class Registry:
     # for rather than every subpackage underneath them.
     __fills: dict[str, str] = {}
 
+    # Sources adopted from a loaded snapshot, by module. Kept as the source objects
+    # rather than resolved paths: locating a directory digests candidates until one
+    # matches, and doing that during load made load(verify=False) hash every file --
+    # the exact work that argument exists to skip (SWE-34). Export digests anyway, so
+    # it resolves there instead.
+    __loaded_sources: dict[str, SnapshotSource] = {}
+
     # Nesting depth of fill_registry, which recurses into subpackages.
     __fill_depth: int = 0
 
@@ -457,7 +464,7 @@ class Registry:
             sources = [
                 SnapshotSource(
                     module=filled,
-                    path=filled_path,
+                    path=cls.__source_directory(filled, filled_path),
                     relative_path=SnapshotSource.relative_to_root(filled, filled_path),
                     digest=SnapshotSource.digest_of(filled_path),
                 )
@@ -467,6 +474,26 @@ class Registry:
             RegistrySnapshot(
                 sources=sources, entries=entries, skipped=dict(cls.__skipped)
             ).write(path)
+
+    @classmethod
+    def __source_directory(cls, module: str, recorded: str) -> str:
+        """
+        The directory to digest when exporting a tree.
+
+        A tree this registry filled itself is at the path it walked. One adopted from
+        a snapshot may be installed somewhere else entirely, so it is located now —
+        which digests candidates, and is why that is done here rather than at load
+        time, where an export's digest is paid regardless (SWE-34).
+
+        Args:
+            module: Root module of the tree.
+            recorded: The path ``__fills`` holds for it.
+
+        Returns:
+            The directory whose sources should be digested.
+        """
+        loaded = cls.__loaded_sources.get(module)
+        return loaded.resolved_path() if loaded is not None else recorded
 
     @classmethod
     def load(cls, path: str, verify: bool = True) -> None:
@@ -530,10 +557,12 @@ class Registry:
             # from __fills, load never populated it, and a load-then-export cycle
             # produced a snapshot with no sources at all — one whose verify=True can
             # never fail, which looks like a verified load and is not one (SWE-27).
-            # Recorded at the directory the source resolves to now rather than the
-            # one it was exported from, so a re-export digests the live tree.
+            # The source is kept whole and located later, at export, because
+            # locating means digesting (SWE-34). The recorded path stands in until
+            # then, so __fills still answers "which trees does this registry cover".
             for source in snapshot.sources:
-                cls.__fills.setdefault(source.module, source.resolved_path())
+                cls.__fills.setdefault(source.module, source.path)
+                cls.__loaded_sources.setdefault(source.module, source)
 
     @classmethod
     def _resolve_entry_class(cls, module: str, attribute: str) -> type:
@@ -887,10 +916,12 @@ class Registry:
         # stranding the index entry. ensure_resolved's "nothing pending" fast path
         # then never fired again, so every total miss walked the sweep path and
         # lazy="strict" cited a module with nothing to import (SWE-32).
-        if not any(
-            entry.is_lazy and entry.module == module_name for entry in cls.__registry
-        ):
-            cls.__unresolved.pop(module_name, None)
+        #
+        # Unconditional: the filter above keeps exactly the entries that are not this
+        # module's lazy ones, so none can remain. Checking first was a full registry
+        # scan to confirm something already guaranteed -- O(n) per module, O(n squared)
+        # over a fill (SWE-34).
+        cls.__unresolved.pop(module_name, None)
 
     @classmethod
     def __resync_seen(cls) -> None:

@@ -30,6 +30,7 @@ def reset_registry() -> None:
         "fills",
         "skipped",
         "strict_fills",
+        "loaded_sources",
     ):
         getattr(Registry, f"_Registry__{attribute}").clear()
 
@@ -85,6 +86,73 @@ class TestSourcesSurviveAReexport(TestCase):
         reset_registry()
         with self.assertRaises(SweetTeaError):
             Registry.load(self.second, verify=True)
+
+
+class TestUnverifiedLoadDoesNoDigest(TestCase):
+    """SWE-34: verify=False exists to skip hashing, so it must not hash."""
+
+    def setUp(self):
+        reset_registry()
+        self.directory = tempfile.mkdtemp()
+        self.package = os.path.join(self.directory, "nodigestpkg")
+        os.makedirs(self.package)
+        open(os.path.join(self.package, "__init__.py"), "w").close()
+        with open(os.path.join(self.package, "models.py"), "w") as handle:
+            handle.write("class Thing:\n    pass\n")
+        self.snapshot = os.path.join(self.directory, "snap.json")
+        Registry.fill_registry(path=self.package, module="nodigestpkg", lazy=True)
+        Registry.export(self.snapshot)
+        reset_registry()
+        self.addCleanup(self._cleanup)
+
+    def _cleanup(self) -> None:
+        reset_registry()
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def counted_digest(self) -> list[str]:
+        """Patch digest_of to record every call, returning the call log."""
+        from sweet_tea import snapshot_source
+
+        calls: list[str] = []
+        # The descriptor out of __dict__, not the function the class hands back:
+        # digest_of is a staticmethod called as self.digest_of(...), so restoring a
+        # bare function would bind self as the path argument and quietly break every
+        # later caller.
+        original = snapshot_source.SnapshotSource.__dict__["digest_of"]
+        plain = original.__func__
+
+        def recording(path: str) -> str:
+            calls.append(path)
+            return plain(path)
+
+        snapshot_source.SnapshotSource.digest_of = staticmethod(recording)
+        self.addCleanup(setattr, snapshot_source.SnapshotSource, "digest_of", original)
+        return calls
+
+    def test_an_unverified_load_hashes_nothing(self):
+        """Locating a source digests candidates, so load must not locate one."""
+        calls = self.counted_digest()
+
+        Registry.load(self.snapshot, verify=False)
+
+        self.assertEqual(calls, [])
+        self.assertIn("thing", {entry.key for entry in Registry.entries()})
+
+    def test_a_verified_load_still_hashes(self):
+        """The contrast: verification is the thing that costs a digest."""
+        calls = self.counted_digest()
+
+        Registry.load(self.snapshot, verify=True)
+
+        self.assertTrue(calls)
+
+    def test_a_reexport_after_an_unverified_load_still_describes_its_sources(self):
+        """Deferring the locate to export must not lose SWE-27's guarantee."""
+        Registry.load(self.snapshot, verify=False)
+        second = os.path.join(self.directory, "again.json")
+        Registry.export(second)
+
+        self.assertEqual(len(RegistrySnapshot.read(second).sources), 1)
 
 
 class TestLibraryAndLabelAreNotCollapsed(TestCase):

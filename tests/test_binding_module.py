@@ -37,9 +37,11 @@ def reset_registry() -> None:
         "fills",
         "skipped",
         "strict_fills",
+        "loaded_sources",
     ):
         getattr(Registry, f"_Registry__{attribute}").clear()
     Registry._Registry__strict_fills.clear()
+    Registry._Registry__loaded_sources.clear()
 
 
 class TestBindingModule(TestCase):
