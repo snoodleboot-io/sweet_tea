@@ -773,6 +773,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Singleton Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-counts-as-a-different-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What counts as a different configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1545,10 +1562,42 @@ the one the instance was built with now warns:</p>
 </span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="c1"># is already cached and is not rebuilt, so the configuration from the first call</span>
 </span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="c1"># still applies.</span>
 </span></code></pre></div>
-<p>Fetching an existing singleton without a configuration is the normal idiom and stays
-silent. A model and an equivalent dict compare equal, so switching between them does
-not warn. Where a configuration holds values whose comparison is not a plain boolean —
-a numpy array, say — drift cannot be judged and nothing is said.</p>
+<h3 id="what-counts-as-a-different-configuration">What counts as a different configuration</h3>
+<p>Drift is judged on the keyword arguments construction would use, not on what the caller
+typed, so spellings that build one instance are one configuration:</p>
+<ul>
+<li><strong>No configuration at all.</strong> Fetching an existing singleton without a configuration is
+  the normal idiom and stays silent, and <code>configuration={}</code> says the same thing —
+  <code>create(key, configuration=options.get("cfg", {}))</code> is a fetch, not a rebuild request.</li>
+<li><strong>A model and an equivalent dict</strong>, in either order, including the model a declared
+  <code>__configuration__</code> validates a dict into.</li>
+<li><strong>A declared default spelled out.</strong> With <code>__configuration__</code> declaring <code>retries: int = 3</code>,
+  <code>create(key)</code> and <code>create(key, {"retries": 3})</code> agree, because the schema is applied
+  before the comparison. The schema also decides which spellings are equivalent: where
+  it declares <code>retries: int</code>, passing <code>True</code> or <code>1.0</code> is coerced to <code>1</code> and agrees with
+  <code>1</code>.</li>
+<li><strong>Values a constructor mutates.</strong> The comparison basis is deep-copied before the
+  constructor runs, so a constructor appending to a list it was handed does not make the
+  next caller — who passed an equal list — look wrong.</li>
+<li><strong>NaN.</strong> <code>float("nan")</code> passed twice is the same request both times. That
+  <code>nan != nan</code> is a statement about arithmetic, not about what was asked for.</li>
+</ul>
+<p>And these genuinely differ, so they warn:</p>
+<ul>
+<li>A configuration mutated between calls, <strong>at any depth</strong>: the basis is a snapshot, so
+  <code>nested["opts"]["mode"] = "slow"</code> followed by another <code>create</code> is reported.</li>
+<li><code>1</code> against <code>True</code>, and <code>1</code> against <code>1.0</code>, where no <code>__configuration__</code> declares them
+  equivalent. They reach the constructor as different types and behave differently once
+  there.</li>
+<li>A configuration a declared <code>__configuration__</code> rejects. It cannot be the one the cached
+  instance was built from, and no <code>SweetTeaError</code> is raised for it either, since nothing
+  is constructed.</li>
+</ul>
+<p>Where drift cannot be judged, nothing is said: a configuration holding values whose
+comparison is not a plain boolean — a numpy array, say — or one that could not be
+reduced to keyword arguments at all. A value that cannot be deep-copied, such as a lock
+or an open file, is kept by reference instead, so it is compared as it is then; every
+other value in the configuration is still snapshotted.</p>
 <p>Use <code>Factory</code> when each caller needs its own configuration, or
 <code>SingletonFactory.pop(key)</code> to discard the cached instance before building a new one.</p>
 <h2 id="thread-safety_1">Thread Safety</h2>
