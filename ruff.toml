@@ -23,5 +23,8 @@ section-order = ["future", "standard-library", "third-party", "first-party", "lo
 # subprocess, so it must put the repo on sys.path before importing sweet_tea,
 # and the deliberate import order is the point rather than an oversight.
 "tests/concurrency_scripts/*" = ["E402", "I001"]
+# Provenance fixtures (SWE-20): each module is written in the shape whose
+# discovery behaviour is under test.
+"tests/provenance_cases/*" = ["E402", "F401", "I001"]
 # Audit fixtures: each module is written in a shape the audit must flag.
 "tests/lazy_audit_cases/*" = ["E402", "F401", "I001"]

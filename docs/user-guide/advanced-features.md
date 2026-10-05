@@ -353,7 +353,15 @@ naming the `eager` pattern that would fix it, instead of quietly importing the t
 Once a module is imported, its entries are rebuilt by the same discovery an eager fill
 uses, so a resolved module matches eager registration exactly — plus anything registered
 by hand with `register_lazy`, which is carried forward rather than rebuilt (see
-[Registering one class lazily](#registering-one-class-lazily)). Before that, the view is
+[Registering one class lazily](#registering-one-class-lazily)).
+
+That difference is the point: a name the *scan* guessed at is overruled by what the
+module turned out to hold, while a name you *asked for* is kept. So a binding the
+scanner saw that leads to a class from another package — the `try: from otherlib import
+X / except ImportError: class X` fallback is the common shape — is dropped rather than
+registered, because an eager fill would not have registered it either. An alias you
+registered yourself is kept even when it points at a re-export, which is usually
+exactly why you registered it. Before that, the view is
 approximate in both directions: a class replaced by a decorator, a `TYPE_CHECKING`-only
 class, or a class behind an uninstalled dependency may appear in `list_keys()` and
 vanish on resolution, and runtime-injected names are missing until something asks. Call

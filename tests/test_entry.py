@@ -108,6 +108,7 @@ class TestEntrySerialisation(TestCase):
                 "label": "label",
                 "module": "builtins",
                 "attribute": "dict",
+                "provisional": False,
             },
         )
 

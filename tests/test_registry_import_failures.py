@@ -38,7 +38,7 @@ def reset_registry() -> None:
     Registry._Registry__unresolved.clear()
     Registry._Registry__fills.clear()
     Registry._Registry__skipped.clear()
-    Registry._Registry__no_sweep = False
+    Registry._Registry__strict_fills.clear()
 
 
 def forget(package: str) -> None:

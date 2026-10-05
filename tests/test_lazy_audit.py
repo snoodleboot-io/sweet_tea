@@ -24,7 +24,7 @@ def reset_registry() -> None:
     Registry._Registry__lookup.clear()
     Registry._Registry__lookup_keys.clear()
     Registry._Registry__unresolved.clear()
-    Registry._Registry__no_sweep = False
+    Registry._Registry__strict_fills.clear()
 
 
 def forget_audit_modules() -> None:
