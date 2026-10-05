@@ -9,8 +9,10 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
+import time
 import warnings
-from unittest import TestCase
+from unittest import TestCase, skipUnless
 
 from sweet_tea.factory import Factory
 from sweet_tea.registry import Registry
@@ -426,7 +428,9 @@ class TestSnapshotRelocation(TestCase):
 
         payload = self.written()
 
-        self.assertEqual(payload["version"], 2)
+        # 3 since SWE-28 framed the digest records: the field this test is about
+        # arrived in 2, but the version says what the whole format is.
+        self.assertEqual(payload["version"], 3)
         for source in payload["sources"]:
             self.assertEqual(set(source), {"module", "path", "relative_path", "digest"})
         self.assertEqual(payload["sources"][0]["relative_path"], ".")
@@ -544,3 +548,478 @@ class TestSnapshotFileHandling(TestCase):
             handle.write("x = 2\n")
 
         self.assertNotEqual(SnapshotSource.digest_of(first), before)
+
+
+class TestSnapshotNamespacePortions(TestCase):
+    """SWE-28: a namespace package has a directory per portion; check the right one."""
+
+    PACKAGE = "nsportions"
+
+    def setUp(self):
+        reset_registry()
+        self.directory = tempfile.mkdtemp()
+        self.first = os.path.join(self.directory, "p1")
+        self.second = os.path.join(self.directory, "p2")
+        self.first_portion = self.portion(self.first, "class Thing:\n    pass\n")
+        self.second_portion = self.portion(
+            self.second, "class Thing:\n    pass\n\n\nclass Other:\n    pass\n"
+        )
+        self.path = os.path.join(self.directory, "registry.json")
+        # Search order puts the portion that was *not* exported first, which is the
+        # arrangement that used to make resolution settle on the wrong directory.
+        sys.path.insert(0, self.second)
+        sys.path.insert(0, self.first)
+        importlib.invalidate_caches()
+
+    def tearDown(self):
+        reset_registry()
+        for root in (self.first, self.second):
+            while root in sys.path:
+                sys.path.remove(root)
+        for name in [
+            n
+            for n in sys.modules
+            if n == self.PACKAGE or n.startswith(f"{self.PACKAGE}.")
+        ]:
+            del sys.modules[name]
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def portion(self, root: str, body: str) -> str:
+        """Write one portion of the namespace package and return its directory."""
+        portion = os.path.join(root, self.PACKAGE)
+        os.makedirs(portion)
+        with open(os.path.join(portion, "thing.py"), "w") as handle:
+            handle.write(body)
+        return portion
+
+    def export_from_the_second_portion(self) -> None:
+        """Fill from the portion search order puts second, and export that."""
+        Registry.fill_registry(path=self.second_portion, module=self.PACKAGE, lazy=True)
+        Registry.export(self.path)
+        reset_registry()
+
+    def recorded_source(self) -> SnapshotSource:
+        """The single source the exported snapshot holds."""
+        return RegistrySnapshot.read(self.path).sources[0]
+
+    def test_the_exported_portion_is_the_one_resolved(self):
+        """Both portions answer to the relative record; only one of them was walked."""
+        self.export_from_the_second_portion()
+
+        self.assertEqual(
+            os.path.realpath(self.recorded_source().resolved_path()),
+            os.path.realpath(self.second_portion),
+        )
+
+    def test_an_untouched_namespace_tree_is_not_stale(self):
+        """Resolving to a sibling portion called a tree nobody had touched stale."""
+        self.export_from_the_second_portion()
+
+        Registry.load(self.path)
+
+        self.assertIn("other", {entry.key for entry in Registry.entries()})
+
+    def test_a_change_in_the_exported_portion_is_refused(self):
+        """The portion that was walked is the one whose edits have to be noticed."""
+        self.export_from_the_second_portion()
+        with open(os.path.join(self.second_portion, "thing.py"), "a") as handle:
+            handle.write("\n\nclass Added:\n    pass\n")
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Registry.load(self.path)
+
+        self.assertIn("no longer matches", str(raised.exception))
+
+    def test_a_portion_whose_digest_differs_is_not_accepted_for_existing(self):
+        """Existing is not matching: a candidate has to hash to the recorded digest."""
+        self.export_from_the_second_portion()
+
+        self.assertNotEqual(
+            os.path.realpath(self.recorded_source().resolved_path()),
+            os.path.realpath(self.first_portion),
+        )
+
+    def test_the_recorded_absolute_path_is_the_last_resort(self):
+        """A located root that holds no matching directory is not the end of it."""
+        elsewhere = os.path.join(self.directory, "elsewhere")
+        os.makedirs(elsewhere)
+        with open(os.path.join(elsewhere, "thing.py"), "w") as handle:
+            handle.write("class Elsewhere:\n    pass\n")
+        source = SnapshotSource(
+            module=self.PACKAGE,
+            path=elsewhere,
+            relative_path=".",
+            digest=SnapshotSource.digest_of(elsewhere),
+        )
+
+        self.assertEqual(source.resolved_path(), elsewhere)
+        self.assertFalse(source.is_stale())
+
+
+@skipUnless(hasattr(os, "symlink"), "the platform has no symlinks")
+class TestSnapshotSymlinkedSubpackages(TestCase):
+    """SWE-28: the digest has to cover every tree the fill registers from."""
+
+    PACKAGE = "linkedapp"
+
+    def setUp(self):
+        reset_registry()
+        self.directory = tempfile.mkdtemp()
+        self.root = os.path.join(self.directory, "root")
+        self.package = os.path.join(self.root, self.PACKAGE)
+        os.makedirs(self.package)
+        open(os.path.join(self.package, "__init__.py"), "w").close()
+        with open(os.path.join(self.package, "thing.py"), "w") as handle:
+            handle.write("class Thing:\n    pass\n")
+        self.shared = os.path.join(self.directory, "shared", "plugins")
+        os.makedirs(self.shared)
+        open(os.path.join(self.shared, "__init__.py"), "w").close()
+        self.plugin_file = os.path.join(self.shared, "plug.py")
+        with open(self.plugin_file, "w") as handle:
+            handle.write("class Plug:\n    pass\n")
+        # The monorepo and editable-install shape: a subpackage that lives elsewhere.
+        os.symlink(self.shared, os.path.join(self.package, "plugins"))
+        self.path = os.path.join(self.directory, "registry.json")
+        sys.path.insert(0, self.root)
+        importlib.invalidate_caches()
+
+    def tearDown(self):
+        reset_registry()
+        while self.root in sys.path:
+            sys.path.remove(self.root)
+        for name in [
+            n
+            for n in sys.modules
+            if n == self.PACKAGE or n.startswith(f"{self.PACKAGE}.")
+        ]:
+            del sys.modules[name]
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def fill(self) -> None:
+        """Fill from the package, link and all."""
+        Registry.fill_registry(path=self.package, module=self.PACKAGE, lazy=True)
+
+    def export(self) -> None:
+        """Fill and export, as a build step would."""
+        self.fill()
+        Registry.export(self.path)
+        reset_registry()
+
+    def test_the_fill_reaches_through_the_link(self):
+        """The premise: a snapshot names classes from behind the symlink."""
+        self.fill()
+
+        self.assertIn("plug", {entry.key for entry in Registry.entries()})
+
+    def test_a_class_renamed_behind_the_link_is_refused(self):
+        """Verification passed while registering a name that no longer existed."""
+        self.export()
+        with open(self.plugin_file, "w") as handle:
+            handle.write("class Renamed:\n    pass\n")
+        with open(os.path.join(self.shared, "extra.py"), "w") as handle:
+            handle.write("class Extra:\n    pass\n")
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Registry.load(self.path)
+
+        self.assertIn("no longer matches", str(raised.exception))
+
+    def test_the_digest_covers_contents_behind_the_link(self):
+        """Nothing about the link may hide an edit from the digest."""
+        before = SnapshotSource.digest_of(self.package)
+
+        with open(self.plugin_file, "a") as handle:
+            handle.write("\n\nclass Second:\n    pass\n")
+
+        self.assertNotEqual(SnapshotSource.digest_of(self.package), before)
+
+    def test_a_symlink_loop_does_not_hang_the_digest(self):
+        """Following links has to terminate on a tree that points back at itself."""
+        before = SnapshotSource.digest_of(self.package)
+        os.symlink(self.package, os.path.join(self.package, "loop"))
+
+        digest = SnapshotSource.digest_of(self.package)
+
+        self.assertEqual(SnapshotSource.digest_of(self.package), digest)
+        self.assertNotEqual(digest, before)
+
+    def test_an_unreadable_source_does_not_break_the_digest(self):
+        """A dangling link named like a module is a tree difference, not a crash."""
+        before = SnapshotSource.digest_of(self.package)
+        os.symlink(
+            os.path.join(self.directory, "absent.py"),
+            os.path.join(self.package, "dangling.py"),
+        )
+
+        self.assertNotEqual(SnapshotSource.digest_of(self.package), before)
+
+
+class TestSnapshotDigestFraming(TestCase):
+    """SWE-28: a file name and its contents must not blur into each other."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def tree(self, name: str, files: dict[str, str]) -> str:
+        """Write a named tree of modules and return its directory."""
+        root = os.path.join(self.directory, name)
+        os.makedirs(root)
+        for file_name, body in files.items():
+            with open(os.path.join(root, file_name), "w") as handle:
+                handle.write(body)
+        return root
+
+    def test_trees_differing_only_in_where_a_name_ends_are_told_apart(self):
+        """Unframed, a module ending in its neighbour's name absorbed that module."""
+        first = self.tree(
+            "one",
+            {
+                "m.py": "class Alpha:\n    pass\n\n\n#",
+                "n.py": "class Beta:\n    pass\n",
+            },
+        )
+        second = self.tree(
+            "two",
+            {"m.py": "class Alpha:\n    pass\n\n\n#n.pyclass Beta:\n    pass\n"},
+        )
+
+        self.assertNotEqual(
+            SnapshotSource.digest_of(first), SnapshotSource.digest_of(second)
+        )
+
+    def test_the_same_sources_still_digest_the_same(self):
+        """Framing may not make the digest depend on anything but the sources."""
+        files = {"m.py": "class Alpha:\n    pass\n", "n.py": "class Beta:\n    pass\n"}
+
+        self.assertEqual(
+            SnapshotSource.digest_of(self.tree("left", files)),
+            SnapshotSource.digest_of(self.tree("right", files)),
+        )
+
+
+class TestSnapshotFieldValidation(TestCase):
+    """SWE-28: a snapshot is input, so a hand-edited one must not steer verification."""
+
+    def setUp(self):
+        reset_registry()
+        self.directory = tempfile.mkdtemp()
+        self.tree = os.path.join(self.directory, "tree")
+        os.makedirs(self.tree)
+        with open(os.path.join(self.tree, "m.py"), "w") as handle:
+            handle.write("class Thing:\n    pass\n")
+        self.path = os.path.join(self.directory, "registry.json")
+
+    def tearDown(self):
+        reset_registry()
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def payload(self, **overrides) -> dict:
+        """A snapshot of one source, with top-level keys overridden."""
+        # The root package is deliberately unlocatable, so the recorded absolute path
+        # is the only candidate and each test is about the field it edits.
+        body = {
+            "version": RegistrySnapshot.FORMAT_VERSION,
+            "sources": [
+                {
+                    "module": "no_such_root_package",
+                    "path": self.tree,
+                    "relative_path": ".",
+                    "digest": SnapshotSource.digest_of(self.tree),
+                }
+            ],
+            "entries": [],
+            "skipped": {},
+        }
+        body.update(overrides)
+        return body
+
+    def write(self, payload: dict) -> None:
+        """Put a hand-made payload on disk."""
+        with open(self.path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+
+    def source_with(self, relative_path: object) -> dict:
+        """The payload's one source, with its relative record replaced."""
+        payload = self.payload()
+        payload["sources"][0]["relative_path"] = relative_path
+        return payload
+
+    def test_a_relative_path_that_escapes_the_root_is_refused(self):
+        """Resolution normalises, so an escape aims verification at any directory."""
+        self.write(self.source_with("../../../../etc"))
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Registry.load(self.path)
+
+        self.assertIn("leaves the root package", str(raised.exception))
+
+    def test_an_absolute_relative_path_is_refused(self):
+        """An absolute record ignores the located root, which is its whole purpose."""
+        self.write(self.source_with(self.tree))
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Registry.load(self.path)
+
+        self.assertIn("is absolute", str(raised.exception))
+
+    def test_a_relative_path_inside_the_root_may_still_use_a_dotted_segment(self):
+        """Only leaving the root is refused; a path that comes back is a path."""
+        self.write(self.source_with("sub/../."))
+
+        Registry.load(self.path)
+
+    def test_a_null_relative_path_reads_like_an_absent_one(self):
+        """Two spellings of no relative record must not reach different verdicts."""
+        self.write(self.source_with(None))
+        explicit = RegistrySnapshot.read(self.path)
+        payload = self.payload()
+        del payload["sources"][0]["relative_path"]
+        self.write(payload)
+        absent = RegistrySnapshot.read(self.path)
+
+        self.assertEqual(explicit.sources[0].relative_path, "")
+        self.assertEqual(absent.sources[0].relative_path, "")
+
+    def test_version_zero_is_refused(self):
+        """A version is a count, and only one greater than ours used to be refused."""
+        self.write(self.payload(version=0))
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Registry.load(self.path)
+
+        self.assertIn("malformed", str(raised.exception))
+
+    def test_a_version_that_is_not_an_integer_is_refused(self):
+        """A quoted version was coerced, so the field could not be trusted as read."""
+        for version in ("2", 2.5, True, None):
+            self.write(self.payload(version=version))
+
+            with self.assertRaises(SweetTeaError) as raised:
+                Registry.load(self.path)
+
+            self.assertIn("malformed", str(raised.exception))
+
+
+class TestSnapshotAtomicExport(TestCase):
+    """SWE-26: an export replaces the file rather than emptying and refilling it."""
+
+    #: Loaders against one exporter. Four is what reproduced the fault in the ticket.
+    READERS = 4
+
+    #: Seconds of contention. Short on purpose: the fault reproduced in under one.
+    SECONDS = 1.5
+
+    #: Entries per snapshot, so that writing one spans more than a single write().
+    ENTRIES = 400
+
+    def setUp(self):
+        reset_registry()
+        self.directory = tempfile.mkdtemp()
+        self.path = os.path.join(self.directory, "registry.json")
+
+    def tearDown(self):
+        reset_registry()
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def snapshot(self) -> RegistrySnapshot:
+        """A snapshot large enough that writing it is not instantaneous."""
+        return RegistrySnapshot(
+            entries=[
+                SnapshotEntry(
+                    key=f"key{index}", class_def=f"module{index}:Class{index}"
+                )
+                for index in range(self.ENTRIES)
+            ]
+        )
+
+    def test_a_reader_never_sees_a_partial_snapshot(self):
+        """An exporter that truncates in place hands concurrent readers half a file."""
+        self.snapshot().write(self.path)
+        stop = threading.Event()
+        failures: list[str] = []
+        reads = [0] * self.READERS
+
+        def export() -> None:
+            while not stop.is_set():
+                self.snapshot().write(self.path)
+
+        def load(index: int) -> None:
+            while not stop.is_set():
+                try:
+                    snapshot = RegistrySnapshot.read(self.path)
+                except SweetTeaError as error:
+                    failures.append(str(error))
+                    continue
+                # A truncated document that happens to parse is the quiet failure: it
+                # would register a registry missing whatever was cut off.
+                if len(snapshot.entries) != self.ENTRIES:
+                    failures.append(
+                        f"{len(snapshot.entries)} of {self.ENTRIES} entries"
+                    )
+                reads[index] += 1
+
+        threads = [threading.Thread(target=export, daemon=True)]
+        threads += [
+            threading.Thread(target=load, args=(index,), daemon=True)
+            for index in range(self.READERS)
+        ]
+        for thread in threads:
+            thread.start()
+        time.sleep(self.SECONDS)
+        stop.set()
+        for thread in threads:
+            thread.join(timeout=60)
+
+        self.assertEqual(
+            len(failures),
+            0,
+            f"{len(failures)} bad reads, first: {failures[0] if failures else ''}",
+        )
+        # Not a count: a slow machine may manage very few. Zero would mean the race was
+        # never run, and a clean verdict on nothing is worth nothing.
+        self.assertGreater(sum(reads), 0, "no loader completed a read")
+
+    def test_the_export_leaves_no_temporary_file_behind(self):
+        """A temp file beside the snapshot is scaffolding, not an artefact."""
+        self.snapshot().write(self.path)
+        self.snapshot().write(self.path)
+
+        self.assertEqual(os.listdir(self.directory), ["registry.json"])
+
+    def test_a_write_that_cannot_land_reports_itself_and_leaves_nothing(self):
+        """The replacement has to be cleaned up when it cannot replace anything."""
+        destination = os.path.join(self.directory, "occupied")
+        os.makedirs(destination)
+
+        with self.assertRaises(SweetTeaError) as raised:
+            self.snapshot().write(destination)
+
+        self.assertIn("Cannot write snapshot", str(raised.exception))
+        self.assertEqual(os.listdir(self.directory), ["occupied"])
+
+    def test_a_write_to_a_missing_directory_still_reports_itself(self):
+        """The error a caller got before must still arrive, from the temp file now."""
+        with self.assertRaises(SweetTeaError) as raised:
+            self.snapshot().write(os.path.join(self.directory, "absent", "r.json"))
+
+        self.assertIn("Cannot write snapshot", str(raised.exception))
+
+    @skipUnless(os.name == "posix", "permissions are a POSIX notion here")
+    def test_a_replaced_snapshot_keeps_its_permissions(self):
+        """A temp file is private by default; the snapshot it replaces must not be."""
+        self.snapshot().write(self.path)
+        os.chmod(self.path, 0o640)
+
+        self.snapshot().write(self.path)
+
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o640)
+
+    @skipUnless(os.name == "posix", "permissions are a POSIX notion here")
+    def test_a_new_snapshot_is_readable(self):
+        """Whatever writes the snapshot, everything that loads it has to read it."""
+        self.snapshot().write(self.path)
+
+        self.assertTrue(os.stat(self.path).st_mode & 0o044)

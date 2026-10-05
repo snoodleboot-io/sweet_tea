@@ -418,6 +418,12 @@ Measured on an 880-module package, all producing the same 799 entries:
 Loaded entries are lazy entries, so nothing is imported until a factory — or a read of
 `entry.class_def` — needs it.
 
+`export` replaces the file rather than emptying and refilling it: the JSON is written to
+a temporary file beside the destination and renamed over it, which is atomic. So a
+process loading the snapshot at the moment a build writes it reads either the old file
+or the new one, never half of one, and that holds across processes, where no lock would
+have.
+
 ### Staleness
 
 A stale snapshot is worse than walking the tree: it registers names that no longer
@@ -433,8 +439,15 @@ step work: export the snapshot in CI, ship it inside the wheel, and it still ver
 from the consumer's `site-packages` rather than being refused for not being under
 `/home/runner/work/...`. Locating the package uses `importlib.util.find_spec` on the
 top-level name, which executes nothing — loading a snapshot never runs the code it
-describes. A package that cannot be located at all falls back to the recorded absolute
-directory, so an uninstalled tree is still checked exactly where it was built.
+describes.
+
+Locating a root package can produce more than one directory, because a namespace
+package (PEP 420) has one per portion. All of them are tried, and a candidate is
+accepted because its sources hash to the recorded digest rather than because a
+directory is there: with portions `p1/ns` and `p2/ns` both importable, a snapshot of
+`p2/ns` is checked against `p2/ns`. The directory the export walked is tried first where
+it is still there, and the recorded absolute directory is the last resort, so an
+uninstalled tree is still checked exactly where it was built.
 
 Verification costs a hash of every source file — 41 ms of the 49 ms above. Pass
 `verify=False` where something else already guarantees the snapshot is current, such as
@@ -445,11 +458,22 @@ a later fill would pass, so it is deliberately conservative: editing a file that
 never registered still marks the snapshot stale. `__pycache__` is ignored, since
 bytecode is derived.
 
+Symlinked directories are followed, because filling follows them: a subpackage that is a
+link into a shared directory or another checkout is walked and registered, so the digest
+has to cover it or verification would pass over renamed and added classes. A directory
+the walk reaches twice — or a loop — is hashed once and noted as a revisit, so the link
+itself still shows up in the digest without the walk running away.
+
+A `relative_path` that is absolute or climbs out of its root package is refused when the
+snapshot is read, rather than resolved: it decides which directory gets verified, so a
+hand-edited one must not be able to aim that anywhere it likes. `version` has to be a
+positive integer no greater than this reader's format.
+
 ### What a snapshot records
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "sources": [{"module": "myapp", "path": "/srv/myapp", "relative_path": ".",
                "digest": "..."}],
   "entries": [{"key": "database_connection", "class_def": "myapp.db:DatabaseConnection",
@@ -467,10 +491,14 @@ directory relative to its root package's own directory — `"."` when the filled
 *is* the root, `"sub"` when `myapp.sub` was filled. Verification prefers the relative
 one, which is why a shipped snapshot still works.
 
-`version` is 2 because of that field. Format 1 snapshots still load — no relative record
-means "check the absolute path", the old behaviour — but a sweet_tea old enough to not
-know the field refuses a format 2 file outright rather than ignoring it and reaching the
-wrong verdict about a relocated tree. Re-export after upgrading to gain relocatability.
+`version` is 3. Format 2 added `relative_path`; format 3 changed how a digest is
+computed — the records inside it are framed, and symlinked subpackages are followed — so
+the same unchanged tree hashes to a different value than it did before. Both halves of
+that are reasons to move the version rather than change behaviour quietly: a sweet_tea
+that predates either refuses a newer file outright and says so, instead of ignoring what
+it does not know and reaching the wrong verdict. An older snapshot still parses here, but
+its digest was computed under the older rules, so verification will call it stale; the
+answer either way is the one the error gives — re-export it.
 
 Skips are recorded on purpose. Filling warns and skips a module whose import raises; a
 snapshot that dropped that would bake in the install profile *and the platform* of the

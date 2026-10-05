@@ -20,7 +20,7 @@ import importlib.util
 import os
 import sys
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SnapshotSource(BaseModel):
@@ -38,6 +38,11 @@ class SnapshotSource(BaseModel):
     installed into a consumer's ``site-packages`` is still describing the same tree, so
     checking it against the CI directory would call every shipped snapshot stale
     (SWE-18). The digest is unchanged by all this; only how the directory is located.
+
+    Neither answer is trusted on its own. A root package may report several directories
+    — a namespace package reports one per portion — so the directory this source means
+    is the candidate whose sources still hash to :attr:`digest`, not simply the first
+    one that happens to exist (SWE-28).
     """
 
     module: str = Field(
@@ -61,6 +66,52 @@ class SnapshotSource(BaseModel):
     digest: str = Field(
         description="Hex digest over the Python sources found under path",
     )
+
+    @field_validator("relative_path", mode="before")
+    @classmethod
+    def validate_relative_path(cls, value: object) -> object:
+        """
+        Treat a null relative record as an absent one, and refuse one that escapes.
+
+        ``null`` and a missing key say the same thing — this snapshot has no relative
+        record — so they are treated the same. Rejecting one and accepting the other
+        made the reader's verdict depend on which of two equivalent spellings whoever
+        wrote the file happened to use.
+
+        An escaping record is a different matter. It is resolved against a directory
+        this process locates at load time, so ``"../../../../etc"`` points verification
+        at a tree that has nothing to do with the package, and a hand-edited snapshot
+        can aim it wherever it likes: where the digest matches, verification passes and
+        the snapshot's names are registered unchecked. The relative record only ever
+        means "somewhere inside the root package", so anything else is refused here
+        rather than normalised out of the package later (SWE-28). An absolute path is
+        refused on the same grounds, since it ignores the located root entirely.
+
+        Args:
+            value: Raw field value as it appeared in the snapshot.
+
+        Returns:
+            The value, with ``None`` normalised to the empty default.
+
+        Raises:
+            ValueError: When the path is absolute, or climbs out of the root package.
+        """
+        if value is None:
+            return ""
+        if not isinstance(value, str) or not value:
+            return value
+        if os.path.isabs(value) or os.path.splitdrive(value)[0]:
+            raise ValueError(
+                f"relative_path {value!r} is absolute; it must name a directory "
+                f"inside the root package"
+            )
+        normalised = os.path.normpath(value)
+        if normalised == os.pardir or normalised.startswith(os.pardir + os.sep):
+            raise ValueError(
+                f"relative_path {value!r} leaves the root package; it must name a "
+                f"directory inside it"
+            )
+        return value
 
     @property
     def root_module(self) -> str:
@@ -128,23 +179,98 @@ class SnapshotSource(BaseModel):
                 return os.path.relpath(walked, root)
         return ""
 
-    def resolved_path(self) -> str:
+    def candidate_paths(self) -> tuple[str, ...]:
         """
-        The directory this source should be checked against, located now.
+        Every directory this source could mean now, in the order to try them.
+
+        The relative record resolved against the root package's own directories comes
+        first, because that is the record that survives being shipped. Every one of
+        those directories is offered rather than just the first: a namespace package
+        reports one per portion, and the exported portion is not reliably the one
+        search order puts first. Where one of them still *is* the directory the export
+        walked, it goes ahead of its siblings — two portions can hold identical sources
+        and then either would satisfy the digest, but it is the exported one whose
+        changes this source is recording. The recorded absolute path comes last: it
+        means nothing on another machine, and everything on the machine that wrote the
+        snapshot, where the tree may not be installed anywhere the root package can be
+        located at all.
 
         Returns:
-            The recorded relative directory resolved against the installed root
-            package, or :attr:`path` when there is no relative record, the package
-            cannot be located, or it no longer holds that directory.
+            Candidate directories in preference order, without duplicates.
         """
+        candidates: list[str] = []
         if self.relative_path:
             for directory in self.root_directories(self.root_module):
                 candidate = os.path.normpath(
                     os.path.join(directory, self.relative_path)
                 )
-                if os.path.isdir(candidate):
-                    return candidate
-        return self.path
+                if candidate not in candidates:
+                    candidates.append(candidate)
+        exported = os.path.realpath(self.path)
+        # A stable sort, so search order still decides between the rest of them.
+        candidates.sort(key=lambda directory: os.path.realpath(directory) != exported)
+        if self.path not in candidates:
+            candidates.append(self.path)
+        return tuple(candidates)
+
+    def __located(self) -> tuple[str, bool]:
+        """
+        Pick the directory this source describes, and say whether it still matches.
+
+        A candidate is accepted because its sources hash to the recorded digest, never
+        merely because a directory is there. Existing used to be the whole test, and
+        for a namespace package it is the wrong one: with portions ``p1/ns`` and
+        ``p2/ns`` both on the path, a snapshot of ``p2/ns`` was checked against
+        ``p1/ns``, which calls an untouched tree stale — and, where that portion
+        happens to hash equal, passes a tree that really did change (SWE-28). Walking
+        on to the next candidate costs an extra digest only when the first one turns
+        out not to be the directory the snapshot was built from.
+
+        Returns:
+            (directory, whether its sources match the recorded digest). The directory
+            is the matching one when one matches, and otherwise the first candidate
+            that exists, so that a staleness error names somewhere real.
+        """
+        fallback = ""
+        for candidate in self.candidate_paths():
+            if not os.path.isdir(candidate):
+                continue
+            if self.digest_of(candidate) == self.digest:
+                return candidate, True
+            if not fallback:
+                fallback = candidate
+        return (fallback or self.path), False
+
+    def resolved_path(self) -> str:
+        """
+        The directory this source should be checked against, located now.
+
+        Returns:
+            The first candidate directory whose sources still hash to :attr:`digest`;
+            failing that the first candidate that exists; failing that :attr:`path`.
+        """
+        return self.__located()[0]
+
+    @staticmethod
+    def directory_identity(path: str) -> tuple[int, int] | None:
+        """
+        What identifies a directory to the file system, rather than by name.
+
+        Device and inode, so that one directory reached both through a symlink and
+        under its real name is recognised as the same directory.
+
+        Args:
+            path: Directory to identify.
+
+        Returns:
+            (device, inode), or None when it cannot be stat'ed — a broken link, or a
+            directory this process may not look at.
+        """
+        try:
+            status = os.stat(path)
+        except OSError:
+            return None
+        return status.st_dev, status.st_ino
 
     @staticmethod
     def digest_of(path: str) -> str:
@@ -158,6 +284,27 @@ class SnapshotSource(BaseModel):
         fill will pass, so the digest is deliberately conservative — an edit to a file
         that was never registered still marks the snapshot stale.
 
+        Symlinked directories are followed, because the fill follows them.
+        :func:`pkgutil.iter_modules` descends a symlinked subpackage and registers the
+        classes it finds there, so a digest that stopped at the link covered less than
+        the snapshot names: with ``app/plugins`` linked elsewhere, a class could be
+        renamed and a module added inside the target and verification still passed,
+        registering a name that no longer exists (SWE-28). Following links means the
+        walk can meet the same directory twice, or — given a loop — forever, so a
+        directory already hashed under another name is recorded as a revisit and not
+        descended again. That bounds the walk by the number of real directories while
+        leaving the second name visible in the digest, so making or breaking a link is
+        still a change rather than a silent equality.
+
+        Each file contributes a framed record — its name, the length of its contents,
+        then the contents, the parts separated by NUL — rather than name and bytes run
+        together. Unframed, the boundary between the two is ambiguous and two different
+        trees hash identically: a module whose text happens to end with the next
+        module's name followed by that module's source digests the same as the two
+        modules do (SWE-28). Framed, a record cannot be read two ways, because a file
+        name cannot contain a NUL and the length field is always decimal — which is
+        also why the markers standing in for a length are words.
+
         Args:
             path: Directory to hash.
 
@@ -165,21 +312,40 @@ class SnapshotSource(BaseModel):
             Hex digest.
         """
         hasher = hashlib.sha256()
-        for directory, directory_names, file_names in os.walk(path):
-            directory_names[:] = sorted(
-                name for name in directory_names if name != "__pycache__"
-            )
+        visited: set[tuple[int, int]] = set()
+        root_identity = SnapshotSource.directory_identity(path)
+        if root_identity is not None:
+            visited.add(root_identity)
+        for directory, directory_names, file_names in os.walk(path, followlinks=True):
+            descend = []
+            for name in sorted(n for n in directory_names if n != "__pycache__"):
+                child = os.path.join(directory, name)
+                relative = os.path.relpath(child, path).encode()
+                identity = SnapshotSource.directory_identity(child)
+                if identity is None:
+                    hasher.update(relative + b"\0unreadable\0")
+                    continue
+                if identity in visited:
+                    hasher.update(relative + b"\0revisited\0")
+                    continue
+                visited.add(identity)
+                descend.append(name)
+            directory_names[:] = descend
             for file_name in sorted(file_names):
                 if not file_name.endswith(".py"):
                     continue
                 full_path = os.path.join(directory, file_name)
-                hasher.update(os.path.relpath(full_path, path).encode())
+                relative = os.path.relpath(full_path, path).encode()
                 try:
                     with open(full_path, "rb") as handle:
-                        hasher.update(handle.read())
+                        contents = handle.read()
                 except OSError:
                     # Unreadable now means a different tree than the one exported.
-                    hasher.update(b"<unreadable>")
+                    hasher.update(relative + b"\0unreadable\0")
+                    continue
+                hasher.update(
+                    relative + b"\0" + str(len(contents)).encode() + b"\0" + contents
+                )
         return hasher.hexdigest()
 
     def is_stale(self) -> bool:
@@ -192,9 +358,7 @@ class SnapshotSource(BaseModel):
         differently are still different.
 
         Returns:
-            True when the directory is gone or its sources have changed.
+            True when no directory this source could mean still holds the sources it
+            recorded — the directory is gone, or what is there has changed.
         """
-        located = self.resolved_path()
-        if not os.path.isdir(located):
-            return True
-        return self.digest_of(located) != self.digest
+        return not self.__located()[1]
