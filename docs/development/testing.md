@@ -74,6 +74,7 @@ If a test uses `fill_registry(lazy=True)`, clear two more:
 ```python
     Registry._Registry__unresolved.clear()   # modules still pending import
     Registry._Registry__strict_fills.clear() # roots filled with lazy="strict"
+    Registry._Registry__loaded_sources.clear()  # trees adopted from a snapshot
     Registry._Registry__fills.clear()        # trees filled, recorded for export()
     Registry._Registry__skipped.clear()      # modules skipped, recorded for export()
 ```

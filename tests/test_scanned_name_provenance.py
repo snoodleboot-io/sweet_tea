@@ -30,6 +30,7 @@ def reset_registry() -> None:
         "fills",
         "skipped",
         "strict_fills",
+        "loaded_sources",
     ):
         getattr(Registry, f"_Registry__{attribute}").clear()
 
