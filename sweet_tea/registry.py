@@ -1092,11 +1092,46 @@ class Registry:
             name_of_package: Full dotted module name.
             source_file: Path to the module's source.
 
-        Raises:
-            SweetTeaError: When the source cannot be read or parsed. The eager path
-                fails on such a module too, by way of the import.
+        A module whose source cannot be scanned does not fail the fill. Which way it
+        is handled depends on why, because the two reasons do not mean the same thing
+        (SWE-23):
+
+        - **Unparsable** source cannot be imported either, so the module is reported
+          and skipped exactly as the eager path reports and skips it. Both modes then
+          register the same classes, which is the parity lazy filling rests on.
+        - **Unreadable** source may still import, from cached bytecode: CPython needs
+          to stat the source but not read it. Verified — a module whose ``.py`` is
+          mode 000 imports fine from its ``.pyc``. The eager path would register its
+          classes, so skipping here would break parity in the other direction. It
+          falls back to importing the module instead.
+
+        Before this, either reason aborted the whole fill and left the registry half
+        populated, losing every module after the bad one.
+
+        Args:
+            label: Optional label for categorizing classes.
+            library: Name of the library the classes belong to.
+            name_of_package: Full dotted module name.
+            source_file: Path to the module's source.
         """
-        for attribute in LazyScanner.scan_file(source_file):
+        try:
+            attributes = LazyScanner.scan_file(source_file)
+        except SweetTeaError as error:
+            if isinstance(error.__cause__, OSError):
+                cls.__logger.debug(
+                    f"Cannot read {source_file}; importing {name_of_package} instead"
+                )
+                cls.__add_entry_to_registry(
+                    label=label, library=library, name_of_package=name_of_package
+                )
+                return
+            # Reported the way an unimportable module is reported, and for the same
+            # reason: the caller gets a registry that is short by one module, with a
+            # warning and a skipped() record saying which and why.
+            cls.__skip_module(name_of_package, error.__cause__ or error)
+            return
+
+        for attribute in attributes:
             cls.register_lazy(
                 key=attribute.lower(),
                 module=name_of_package,

@@ -213,3 +213,6 @@ token
 
 # Session files (local only)
 .prompticorn/
+
+# Agent worktrees (transient, each is its own checkout)
+.claude/worktrees/

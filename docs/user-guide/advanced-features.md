@@ -119,6 +119,23 @@ caller does about them:
 Nothing from a module that failed is registered: its classes are collected before any
 of them is registered, so a skip is never half-applied.
 
+### Source a lazy fill cannot read
+
+A lazy fill parses rather than imports, which gives it two failure modes of its own.
+Neither aborts the fill, and the two are handled differently because they do not mean
+the same thing:
+
+- **Unparsable source** — a Python 2 leftover, a generated file, a vendored sample —
+  could not be imported either, so the module is skipped and recorded exactly as an
+  unimportable one is. Both modes then register the same classes.
+- **Unreadable source** — a file whose permissions deny the fill — may still import
+  from cached bytecode, since CPython needs to stat the source but not read it. The
+  eager path would register its classes, so the lazy path imports the module rather
+  than skipping it.
+
+A module declaring a non-UTF-8 encoding is neither: the scan reads bytes and applies
+the PEP 263 coding declaration the way an import does, so it is scanned normally.
+
 A caller who would rather not continue needs no option for it, because the warning is
 that switch:
 

@@ -251,9 +251,24 @@ class TestLazyImportFailuresAtResolution(TestCase):
 
         self.assertIn("AssertionError", str(raised.exception))
 
-    def test_unparsable_source_still_raises_at_fill_time(self):
-        """The scanner's contract is unchanged: a file it cannot parse is an error."""
-        path = write_package(self, "swe15_lazy_unparsable", {"bad": "class Broken(:\n"})
+    def test_unparsable_source_is_skipped_at_fill_time(self):
+        """A file the scanner cannot parse is skipped, as SWE-23 made it.
 
-        with self.assertRaises(SweetTeaError):
-            fill(path, "swe15_lazy_unparsable", lazy=True)
+        This test asserted the opposite until then — that the fill raised. It did,
+        and that was the defect: an unparsable file aborted the walk and left the
+        registry holding whatever came before it alphabetically.
+        """
+        path = write_package(
+            self,
+            "swe15_lazy_unparsable",
+            {"aaa": "class Early:\n    pass\n", "bad": "class Broken(:\n"},
+        )
+
+        caught = fill(path, "swe15_lazy_unparsable", lazy=True)
+
+        self.assertIn("early", {entry.key for entry in Registry.entries()})
+        self.assertIn("swe15_lazy_unparsable.bad", Registry.skipped())
+        self.assertTrue(
+            any("SyntaxError" in str(warning.message) for warning in caught),
+            [str(warning.message) for warning in caught],
+        )
