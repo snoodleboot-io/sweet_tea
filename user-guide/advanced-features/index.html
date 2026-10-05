@@ -759,6 +759,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#thread-safety_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Thread Safety
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#lazy-registration" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1508,6 +1519,31 @@ not warn. Where a configuration holds values whose comparison is not a plain boo
 a numpy array, say — drift cannot be judged and nothing is said.</p>
 <p>Use <code>Factory</code> when each caller needs its own configuration, or
 <code>SingletonFactory.pop(key)</code> to discard the cached instance before building a new one.</p>
+<h2 id="thread-safety_1">Thread Safety</h2>
+<p>The registry's lock guards the registry's own state. It is deliberately <strong>not</strong> held
+while a module is imported, and <code>SingletonFactory</code>'s lock is <strong>not</strong> held while a
+constructor runs.</p>
+<p>That matters because both used to be, and both deadlocked. Importing a module runs its
+body; if that body touches the registry — <code>Factory.create(...)</code> or <code>Registry.entries()</code>
+at module scope — then a thread importing it holds Python's per-module import lock and
+wants the registry's, while a fill or a lookup holds the registry's and wants the
+import lock. Neither ever proceeds, and because CPython's import deadlock detector only
+looks for cycles among import locks, nothing reports it.</p>
+<p>What this means in practice:</p>
+<ul>
+<li><strong>Concurrent fills and lookups interleave.</strong> Registration dedupes by identity, and
+  resolution re-reads the registry after importing rather than trusting what it saw
+  before, so interleaving is safe rather than merely tolerated.</li>
+<li><strong>Imports overlap.</strong> Four modules that each take 0.5s to import cost about 0.5s
+  across four threads, not 2s, and an unrelated <code>Registry.entries()</code> is not blocked
+  behind them.</li>
+<li><strong>A singleton is still constructed exactly once.</strong> Construction is admitted by a
+  per-key lock, so one thread builds a given key while every other key and every cache
+  read proceeds. Verified with 32 threads against four spellings of one key: one
+  instance, one constructor call.</li>
+</ul>
+<p>A constructor that resolves another registered class, or a module body that creates a
+singleton, is therefore safe. Neither was before.</p>
 <h2 id="lazy-registration">Lazy Registration</h2>
 <p><code>fill_registry</code> imports every module in the tree to find the classes in it. With
 <code>lazy=True</code> it reads the names out of the source instead, and imports a module only
