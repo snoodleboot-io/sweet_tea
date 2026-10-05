@@ -1710,6 +1710,10 @@ that touches <code>class_def</code> on <em>every</em> entry is effectively an ea
 <ul>
 <li><strong>Reading an attribute can now raise.</strong> A module that fails to import, or a name the
   scanner guessed at that turns out not to be a class, raises <code>SweetTeaError</code> on access.</li>
+<li><strong>Reading does not alter the entry.</strong> <code>entries()</code> copies the list, not the entries, so
+  the objects you get are the registry's own. Resolving through one caches the class for
+  your reads but leaves <code>is_lazy</code> and <code>class_object</code> saying what the registry believes,
+  because a reader changing those corrupted the registry under concurrent lookups.</li>
 <li><strong><code>entry.is_lazy</code> does not resolve.</strong> Use it to check whether a read would import
   anything. <code>entry.class_object</code> exposes the stored class without resolving, for code
   that wants to see unresolved entries as unresolved.</li>
