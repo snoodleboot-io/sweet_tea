@@ -1709,6 +1709,11 @@ naming the <code>eager</code> pattern that would fix it, instead of quietly impo
 uses, so a resolved module matches eager registration exactly — plus anything registered
 by hand with <code>register_lazy</code>, which is carried forward rather than rebuilt (see
 <a href="#registering-one-class-lazily">Registering one class lazily</a>).</p>
+<p>Registering one name registers one name. Resolving it imports its module, but the
+module's other classes are registered only under the <code>(library, label)</code> pairs a <em>fill</em>
+asked for — an alias does not drag its module's whole class list in behind it. And a
+registration made <em>while</em> a module is being imported, including from the module's own
+body, survives the resolution that triggered it.</p>
 <p>That difference is the point: a name the <em>scan</em> guessed at is overruled by what the
 module turned out to hold, while a name you <em>asked for</em> is kept. So a binding the
 scanner saw that leads to a class from another package — the <code>try: from otherlib import
