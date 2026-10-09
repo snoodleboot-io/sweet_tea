@@ -1915,29 +1915,48 @@ hand-edited one must not be able to aim that anywhere it likes. <code>version</c
 positive integer no greater than this reader's format.</p>
 <h3 id="what-a-snapshot-records">What a snapshot records</h3>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="p">{</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span>
 </span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"relative_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"."</span><span class="p">,</span>
 </span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">               </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
 </span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">}],</span>
+</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w"> </span><span class="nt">"provisional"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}],</span>
 </span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span>
 </span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">                </span><span class="s2">"missing optional dependency: ModuleNotFoundError: No module named 'redis'"</span><span class="p">}</span>
 </span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="p">}</span>
 </span></code></pre></div>
 <p><code>class_def</code> is <code>module:attribute</code> — the attribute the class is <em>bound to</em>, which is how
 the registry keys it and is not always the class's own <code>__name__</code>.</p>
+<p><code>provisional</code> says whether the name was read out of source or asked for. It decides who
+wins when the module is finally imported: a scanned name is a guess and discovery
+overrules it, an explicit registration is a request and is kept. Leaving it out of the
+file made every guess come back as a request, so a snapshot of a lazily filled tree
+registered names the package never defined — one of them a class from another
+distribution, under this library's name (SWE-41). With it recorded, <code>export</code> → <code>load</code> →
+<code>resolve_all</code> lands exactly where a fill of the same tree lands.</p>
 <p><code>path</code> is where the tree sat when the snapshot was written; <code>relative_path</code> is the same
 directory relative to its root package's own directory — <code>"."</code> when the filled module
 <em>is</em> the root, <code>"sub"</code> when <code>myapp.sub</code> was filled. Verification prefers the relative
 one, which is why a shipped snapshot still works.</p>
-<p><code>version</code> is 3. Format 2 added <code>relative_path</code>; format 3 changed how a digest is
+<p><code>version</code> is 4. Format 2 added <code>relative_path</code>; format 3 changed how a digest is
 computed — the records inside it are framed, and symlinked subpackages are followed — so
-the same unchanged tree hashes to a different value than it did before. Both halves of
-that are reasons to move the version rather than change behaviour quietly: a sweet_tea
-that predates either refuses a newer file outright and says so, instead of ignoring what
-it does not know and reaching the wrong verdict. An older snapshot still parses here, but
-its digest was computed under the older rules, so verification will call it stale; the
-answer either way is the one the error gives — re-export it.</p>
+the same unchanged tree hashes to a different value than it did before; format 4 added
+<code>provisional</code>. Each is a reason to move the version rather than change behaviour quietly:
+a sweet_tea that predates any of them refuses a newer file outright and says so, instead
+of ignoring what it does not know and reaching the wrong verdict. An older snapshot still
+parses here, but its digest was computed under the older rules, so verification will call
+it stale; the answer either way is the one the error gives — re-export it.</p>
+<p>A format 3 or earlier snapshot read here records no provenance, so every name in it is
+read as a guess and <code>load</code> warns. That is the safe direction — a guess read as a request
+is the bug above — and it costs less than it sounds like: a guess is only overruled where
+discovery disagrees, so a name genuinely bound to a class in the module it names survives
+either way, aliases included. What is lost is a name discovery cannot confirm (an alias
+pointing at a re-export, whose class belongs to another module) and a class only
+discovery can see (one built at runtime, where no scan reaches it), because <code>load</code> also
+declines to treat an older file's <code>(library, label)</code> pairs as filled — it cannot tell
+which of them a fill established, and assuming they all were registered one class under
+two libraries and made its key ambiguous. Both costs are names that go missing rather
+than names that appear wrongly, and both are repaired by re-exporting. Escalating
+<code>SweetTeaWarning</code> to an error turns the warning into a refusal.</p>
 <p>Skips are recorded on purpose. Filling warns and skips a module whose import raises; a
 snapshot that dropped that would bake in the install profile <em>and the platform</em> of the
 machine that built it, and a reader could not tell "not registered" from "not
