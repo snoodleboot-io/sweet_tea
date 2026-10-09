@@ -112,6 +112,28 @@ class SingletonFactory(BaseFactory):
     __construction_owner: Dict[tuple[str, str, str], tuple[int, str]] = {}
     __blocked_on: Dict[int, tuple[str, str, str]] = {}
 
+    # What a construction has to still be true when it finishes, or its instance is not
+    # cached: the number of clear() calls, and the number of times each key has been
+    # popped. A construction reads both before it begins and they are compared under
+    # the lock at the commit, so an instance built against the registry as it was
+    # before a reset cannot install itself after one (SWE-45). Cancelling the
+    # construction is not an option and holding the lock across it is forbidden (see
+    # the class docstring), so the commit is the only place the race can be settled.
+    #
+    # Two counters rather than one, because one would make pop of a key disown an
+    # in-flight construction of a *different* key — a warning about an instance nobody
+    # reset, which is the kind of false positive that gets a whole warning category
+    # filtered out. clear() empties the per-key counts instead of bumping each of them:
+    # every token in flight already carries the old epoch and so loses regardless.
+    #
+    # pop() can only remove an instance that is cached, and nothing is cached for a key
+    # while a thread holds its construction lock and has not committed, so pop cannot
+    # in fact race a construction of the same key today. Its bump is there so that the
+    # invariant is stated in both places that break it rather than only in the one
+    # that can currently be observed.
+    __clear_epoch: int = 0
+    __removals: Dict[tuple[str, str, str], int] = {}
+
     # Stands in for the comparison basis of a configuration a declared
     # ``__configuration__`` will not accept. Not a basis, and not undecidable either: a
     # configuration that fails validation cannot be the one the cached instance was
@@ -138,6 +160,11 @@ class SingletonFactory(BaseFactory):
         This method provides lazy initialization - instances are created only when first requested.
         Subsequent calls with the same key will return the same cached instance.
 
+        A :meth:`clear` or a :meth:`pop` of this key that lands while the constructor
+        is running is honoured over this call: the instance is returned to the caller
+        but not cached, with a warning, since an instance built against state that has
+        since been reset must not install itself over the reset (SWE-45).
+
         Args:
             key: Name to reference the class from the registry.
             library: Optional library filter for the class.
@@ -146,7 +173,8 @@ class SingletonFactory(BaseFactory):
                 dict or a pydantic model whose fields are spread into the constructor.
 
         Returns:
-            The existing singleton instance, or a newly created and registered instance.
+            The existing singleton instance, or a newly created instance — registered,
+            unless the factory was reset while it was being constructed.
 
         Raises:
             SweetTeaError: If the key is not found in the registry, filters don't
@@ -185,6 +213,12 @@ class SingletonFactory(BaseFactory):
                 cached = cache_key in cls.__instances
                 if cached:
                     cached_instance = cls.__instances[cache_key]
+                # Read here, in the same hold as the last look at the cache: from this
+                # point on this call is building an instance of the registry as it is
+                # now, and a clear() after it must not be undone by the result landing
+                # (SWE-45). Taken before the configuration is applied rather than
+                # after, because applying it is already this call's work.
+                token = cls.__commit_token(cache_key)
 
             if cached:
                 # Again outside the factory lock. The construction lock is still held,
@@ -234,13 +268,93 @@ class SingletonFactory(BaseFactory):
             new_instance = cls._construct(entry, applied)
 
             with cls.__lock:
-                cls.__instances[cache_key] = new_instance
-                cls.__configurations[cache_key] = comparison_basis
-                cls._logger.info(
-                    f"Created and registered singleton instance: {entry.key}"
-                )
+                # The commit is where the race with clear() and pop() is settled,
+                # because it is the only place left: the construction above cannot be
+                # cancelled and cannot be run under this lock. An instance whose token
+                # has moved was built against a registry that has since been reset, so
+                # caching it would resurrect a key the caller was told was gone —
+                # list_singletons() going [] and then ['slow'] with no create() in
+                # between — and would hand the next caller an instance configured
+                # before the reset (SWE-45).
+                disowned = cls.__commit_token(cache_key) != token
+                if not disowned:
+                    cls.__instances[cache_key] = new_instance
+                    cls.__configurations[cache_key] = comparison_basis
+                    cls._logger.info(
+                        f"Created and registered singleton instance: {entry.key}"
+                    )
+                else:
+                    cls._logger.info(
+                        f"Discarded a singleton instance constructed across a reset: "
+                        f"{entry.key}"
+                    )
+
+        # Warned with neither lock held, and after the construction lock is released:
+        # a filter that escalates SweetTeaWarning raises from here, and must not do so
+        # holding a lock or leaving the key unconstructible. That escalation is the
+        # right behaviour for whoever asks for it — a reset losing a construction is
+        # exactly the kind of thing a strict caller wants to fail on — and it is the
+        # reason the instance is returned on the line below rather than here.
+        if disowned:
+            cls.__warn_on_disowned_instance(cache_key)
 
         return new_instance
+
+    @classmethod
+    def __commit_token(cls, cache_key: tuple[str, str, str]) -> tuple[int, int]:
+        """
+        What must still hold when a construction commits, for its instance to be kept.
+
+        Must be called with the factory's lock held, by both readers: the point of the
+        token is that the state it samples cannot move between the sample and the
+        comparison without a clear() or a pop() happening in between, and only the lock
+        makes that true.
+
+        Args:
+            cache_key: Identity of the entry being constructed.
+
+        Returns:
+            The number of clear() calls so far, with the number of times this key has
+            been popped.
+        """
+        return (cls.__clear_epoch, cls.__removals.get(cache_key, 0))
+
+    @classmethod
+    def __warn_on_disowned_instance(cls, cache_key: tuple[str, str, str]) -> None:
+        """
+        Report an instance that was constructed but not cached.
+
+        A dropped instance is worth a warning rather than a log line, because the
+        caller is left holding something the factory has disowned: it is not the
+        singleton for its key, nothing else will ever be handed it, and the next
+        ``create`` for that key constructs a second object the holder of this one has
+        no way to learn about. Two objects that were both, briefly, "the" singleton is
+        precisely the situation this class exists to prevent, and the reset is what
+        caused it — so the report belongs with whoever's call lost, not only in a log
+        nobody reads after the fact.
+
+        Returning the instance anyway is deliberate. The construction finished, the
+        object is valid, and raising instead would turn a caller's correct call into a
+        failure because another thread reset the factory while it ran. A caller who
+        would rather fail has ``warnings.simplefilter("error", SweetTeaWarning)``,
+        which is the same switch the rest of this library hands them.
+
+        Args:
+            cache_key: Identity of the entry whose instance was dropped.
+        """
+        warnings.warn(
+            f"The singleton instance just constructed for {cache_key[0]!r} was not "
+            f"cached: SingletonFactory.clear() or pop() ran while it was being built, "
+            f"so it was constructed against state that has since been reset. This "
+            f"call returns it, but the factory does not hold it and the next create() "
+            f"for this key will construct a new one — so this instance is not shared "
+            f"with anything. Reset the factory before the constructions that depend "
+            f"on it, not during them.",
+            SweetTeaWarning,
+            # 1 is this helper, 2 is create, 3 is the caller whose instance was
+            # dropped — which is the line worth pointing at.
+            stacklevel=3,
+        )
 
     @classmethod
     @contextlib.contextmanager
@@ -846,11 +960,24 @@ class SingletonFactory(BaseFactory):
         in parallel with the first. Two instances of a singleton, from a reset API, is
         the one outcome this class must not have (SWE-39). The locks are keyed by
         resolved cache key and so bounded by the registry, which costs little to keep.
+
+        A construction already running is not cancelled either — nothing can cancel it
+        — but it no longer installs its result over this reset. Clearing bumps the
+        epoch every in-flight construction sampled before it began, so a construction
+        that finishes after this call returns its instance to its caller with a warning
+        and caches nothing (SWE-45). Without that, ``list_singletons()`` went ``[]``
+        and then back to ``['slow']`` with no ``create`` in between, holding an
+        instance built against the registry as it was before the reset.
         """
         with cls.__lock:
             count = len(cls.__instances)
             cls.__instances.clear()
             cls.__configurations.clear()
+            # Emptied rather than bumped per key: every token in flight carries the
+            # old epoch, so it loses whatever its per-key count says, and the mapping
+            # starts again at nothing instead of growing across resets.
+            cls.__clear_epoch += 1
+            cls.__removals.clear()
             cls._logger.info(f"Cleared {count} singleton instances")
 
     @classmethod
@@ -860,6 +987,11 @@ class SingletonFactory(BaseFactory):
 
         Resolves through the same path as :meth:`create`, so any spelling of the key
         removes the instance that spelling would have returned.
+
+        A construction of this key that began before this call does not cache its
+        result afterwards, for the reason :meth:`clear` gives: an instance built before
+        a removal must not undo it (SWE-45). Only this key is affected — a construction
+        of some other singleton is none of this call's business.
 
         Args:
             key: The key of the instance to remove, in any supported spelling.
@@ -892,6 +1024,13 @@ class SingletonFactory(BaseFactory):
 
             instance = cls.__instances.pop(cache_key)
             cls.__configurations.pop(cache_key, None)
+
+            # The same guard clear() gets, narrowed to this key: a construction that
+            # began before this removal must not cache its result after it (SWE-45).
+            # Only this key's count moves, so an unrelated construction is not disowned
+            # by the removal of a neighbour. Bounded by the registry, as the
+            # construction locks are.
+            cls.__removals[cache_key] = cls.__removals.get(cache_key, 0) + 1
 
             # Python's garbage collector will handle destruction automatically
             # when all references are removed

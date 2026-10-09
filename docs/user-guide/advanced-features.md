@@ -107,14 +107,30 @@ Registry.skipped()
 that module: 9 of click's 80 classes registered, and the fill itself failed.
 
 `Registry.skipped()` maps each such module to
-`<category>: <ExceptionType>[: <message>]`. The category separates the two things a
+`<category>: <ExceptionType>[: <message>]`. The category separates the things a
 caller does about them:
 
-- `missing optional dependency` — an `ImportError`. Install the package, or exclude
-  the module from the fill.
-- `import failed` — anything else. A platform guard, or a module wanting an
-  environment it does not have, which is normal and needs nothing; or a genuine bug
-  in that module, which the exception type is there to let you spot.
+- `missing optional dependency` — an `ImportError` from inside the module. Install
+  the package, or exclude the module from the fill.
+- `not importable` — nothing of that name could be imported at all. A directory whose
+  name ends in `.py` is the usual cause: the walk reports it as a module, because the
+  name looks like one, and then no finder will load it. Nothing is missing and nothing
+  ran, so the remedy is the path — rename it, or exclude it from the fill.
+- `import failed` — the module was found, its body ran, and it raised. A platform
+  guard, or a module wanting an environment it does not have, which is normal and
+  needs nothing; or a genuine bug in that module, which the exception type is there to
+  let you spot.
+
+```python
+Registry.fill_registry(path="/.../pkg", module="pkg")   # pkg/trap.py is a directory
+Registry.skipped()
+# {'pkg.trap': "not importable: ModuleNotFoundError: No module named 'pkg.trap'"}
+```
+
+`not importable` is its own category rather than a flavour of `import failed` because
+the two send you to different places: `import failed` points at the module's code, and
+there is no code here. Until SWE-45 this read `missing optional dependency` and advised
+an install, for a dependency that does not exist.
 
 Nothing from a module that failed is registered: its classes are collected before any
 of them is registered, so a skip is never half-applied.
@@ -356,6 +372,15 @@ What this means in practice:
   constructor invocation per key, with never more than one constructor for a key
   running at a time. That holds across a concurrent `clear()`, which is why `clear()`
   keeps the per-key construction locks it used to discard.
+- **A reset beats a construction that was already running.** `clear()` and `pop()`
+  cannot cancel a constructor — nothing can — so a construction that began before one
+  of them finishes, hands its instance back to the caller that asked for it, and
+  caches nothing, with a `SweetTeaWarning` saying so. Otherwise `list_singletons()`
+  went `[]` and then back to `['cache']` with no `create()` in between, holding an
+  instance built against the registry as it was before the reset. The caller still
+  gets a usable object; it is simply not the shared one, and the next `create()` for
+  that key builds a new instance. Reset the factory before the constructions that
+  depend on it, not during them.
 
 A constructor that resolves another registered class, or a module body that creates a
 singleton, is therefore safe. Neither was before.
@@ -571,6 +596,21 @@ a temporary file beside the destination and renamed over it, which is atomic. So
 process loading the snapshot at the moment a build writes it reads either the old file
 or the new one, never half of one, and that holds across processes, where no lock would
 have.
+
+Two consequences of writing it that way are worth knowing:
+
+- **A destination that is a symlink is followed.** The link's *target* is replaced and
+  the link survives, so a deliberate `snapshot.json -> /var/cache/myapp/snapshot.json`
+  indirection keeps working. A chain of links resolves to its end, and a link pointing
+  at a file that does not exist yet has that file created. The temporary file goes
+  beside the resolved target, not beside the link, because the rename has to stay on
+  one file system to be atomic.
+- **The directory holding the destination must be writable**, not just the destination
+  file — that is where the temporary file is created. A writable `snapshot.json` inside
+  a directory you cannot write is refused with a `SweetTeaError` naming the directory.
+  Falling back to a non-atomic in-place write was rejected: it would bring back the
+  truncated reads this exists to prevent, in exactly the environment nobody tests, and
+  make the guarantee conditional on something no caller can see from the API.
 
 ### Staleness
 

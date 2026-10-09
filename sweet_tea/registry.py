@@ -441,12 +441,28 @@ class Registry:
         whose module could not be imported on this machine.
 
         Each reason reads ``<category>: <ExceptionType>[: <message>]``. The category
-        is either ``missing optional dependency`` — an ``ImportError``, so the
-        install profile showing through — or ``import failed`` for anything else: a
-        platform guard like ``click._winconsole``'s ``assert sys.platform ==
-        "win32"``, a module wanting an environment variable, or a genuine bug. The
-        exception type is part of the reason precisely so the last of those can be
-        told from the first two without re-running the fill.
+        is one of three:
+
+        - ``missing optional dependency`` — an ``ImportError`` from inside the module,
+          so the install profile showing through. Installing the package named in the
+          message is the remedy.
+        - ``not importable`` — nothing of that name could be imported at all, which a
+          directory named ``trap.py`` produces: the walk reports it as a module and
+          every finder declines it. Nothing is missing and nothing ran; the path is
+          the problem (SWE-45).
+        - ``import failed`` — the module was found, its body ran, and it raised: a
+          platform guard like ``click._winconsole``'s ``assert sys.platform ==
+          "win32"``, a module wanting an environment variable, or a genuine bug.
+
+        ``not importable`` is a category of its own rather than a flavour of ``import
+        failed`` because the two differ in the only thing a category is for, which is
+        what the reader does next. ``import failed`` says a module ran and objected,
+        and points at that module's code — it is the category whose advice is "if this
+        was meant to import here, that exception is a bug". For a directory ending in
+        ``.py`` there is no code and no bug; the remedy is on disk, in the name of the
+        path. Both were also true of the category it used to be filed under, which is
+        the defect this replaces. The exception type stays part of the reason so that a
+        real bug can still be told from a guard without re-running the fill.
 
         Returns:
             Copy of the skip record.
@@ -1643,6 +1659,43 @@ class Registry:
         message = str(error)
         return f"{type(error).__name__}: {message}" if message else type(error).__name__
 
+    @staticmethod
+    def __is_unimportable_path(error: BaseException, name_of_package: str) -> bool:
+        """
+        Decide whether the import failed on the module itself rather than inside it.
+
+        ``ModuleNotFoundError`` answers two completely different questions with one
+        exception type: "this module imports something that is not installed" and
+        "there is nothing here to import". The second is what a directory named
+        ``trap.py`` produces — the walk reports it as a module, because the name ends
+        in ``.py``, and every finder then declines it — and it was reported as a
+        missing optional dependency, advising an install that cannot help for a
+        dependency that does not exist (SWE-45).
+
+        The exception itself carries the distinction, in ``name``: the module Python
+        went looking for and did not find. When that is the module being imported, or
+        a package above it, the import never reached a module body and nothing is
+        missing from the environment. When it is anything else — a sibling, a
+        third-party top-level name — the module body ran far enough to ask for
+        something the install profile does not provide, which is the category that
+        already existed.
+
+        Args:
+            error: What the import raised.
+            name_of_package: Full dotted path of the module that was being imported.
+
+        Returns:
+            True when the failure is the path, False when it is something the path
+            wanted.
+        """
+        if not isinstance(error, ModuleNotFoundError) or not error.name:
+            return False
+        # A package above it counts: a missing 'pkg.sub' is why 'pkg.sub.mod' could
+        # not be imported, and neither of them is a dependency.
+        return name_of_package == error.name or name_of_package.startswith(
+            f"{error.name}."
+        )
+
     @classmethod
     def __skip_module(cls, name_of_package: str, error: BaseException) -> None:
         """
@@ -1664,6 +1717,14 @@ class Registry:
         for inspection afterwards. The reason is categorised so the install profile
         of the machine stays distinguishable from everything else, which is the one
         distinction the old two-branch handling got right.
+
+        A third category separates the path from what the path wanted. Reading every
+        ``ImportError`` as a missing dependency told anyone who walked a tree
+        containing a directory named ``trap.py`` to install a dependency that does not
+        exist, for a module that is not one (SWE-45) — see
+        :meth:`__is_unimportable_path` for how the exception itself tells them apart,
+        and :meth:`skipped` for why this is its own category rather than a note under
+        ``import failed``.
 
         No ``strict`` option accompanies this. The warning is a real
         :class:`~sweet_tea.sweet_tea_warning.SweetTeaWarning`, so a caller who would
@@ -1689,7 +1750,21 @@ class Registry:
             error: What its import raised.
         """
         detail = cls.__describe_exception(error)
-        if isinstance(error, ImportError):
+        if cls.__is_unimportable_path(error, name_of_package):
+            reason = f"not importable: {detail}"
+            advice = (
+                "Nothing of that name can be imported here, so nothing it appears to "
+                "contain is registered. A directory whose name ends in '.py' is the "
+                "usual cause — the walk reports it as a module and no finder will "
+                "load it. Rename the path, or exclude it from the fill."
+            )
+            # Worth keeping for the same reason as the general failure below, and for
+            # one more: the traceback is where the import machinery says which finder
+            # declined and what it was looking at.
+            cls.__logger.debug(
+                f"Error processing module {name_of_package}: {traceback.format_exc()}"
+            )
+        elif isinstance(error, ImportError):
             # ModuleNotFoundError is an ImportError, so this covers both.
             reason = f"missing optional dependency: {detail}"
             advice = "Install the dependency, or exclude the module from the fill."

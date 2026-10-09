@@ -153,7 +153,9 @@ both safe. A singleton is still built exactly once per key, including across a
 concurrent `clear()`. A constructor that asks for a key already being constructed —
 its own, or one further up the same chain, whether on this thread or round a cycle two
 threads entered from opposite ends — raises `SweetTeaError` naming the cycle instead of
-blocking.
+blocking. A `clear()` or a `pop()` of the key that lands while a constructor is running
+wins: that construction returns its instance to its caller with a `SweetTeaWarning` and
+caches nothing, so a reset is never undone by a construction that preceded it.
 
 **Must not:** assume a fill is atomic. Concurrent fills and lookups interleave; the
 registry is consistent at every point, but a reader may observe a fill in progress.
@@ -253,13 +255,21 @@ class only discovery can see, which is the safe direction and is fixed by re-exp
 
 `export` writes a temporary file beside the destination and renames it over the
 destination, so a concurrent `load` — in this process or another — reads the old
-snapshot or the new one, never a truncated one. No lock is held across the file I/O.
+snapshot or the new one, never a truncated one. No lock is held across the file I/O. A
+destination that is a symlink is resolved first, so the link's target is replaced and
+the indirection survives; the temporary file goes beside that target, since the rename
+has to stay on one file system. The directory holding the resolved destination must
+therefore be writable, not just the destination file: an unwritable directory raises
+`SweetTeaError` naming the directory rather than falling back to a non-atomic write.
 
 `Registry.skipped()` reports the modules a fill could not import, each mapped to
 `<category>: <ExceptionType>[: <message>]`, where the category is
-`missing optional dependency` for an `ImportError` and `import failed` for anything
-else. A snapshot carries them, so "not registered" stays distinguishable from "not
-installed" and from "does not import on this machine".
+`missing optional dependency` for an `ImportError` from inside the module,
+`not importable` when nothing of that name could be imported at all — a directory
+named `trap.py`, which the walk reports as a module and no finder will load — and
+`import failed` for anything else. A snapshot carries them, so "not registered" stays
+distinguishable from "not installed", from "is not a module" and from "does not import
+on this machine".
 
 ### Type-constrained factory
 
