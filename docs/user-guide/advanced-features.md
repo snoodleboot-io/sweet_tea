@@ -159,6 +159,37 @@ named class in such a module still raises `SweetTeaError` — that call has to h
 a class, and there is none — with the exception type in the message, which a bare
 `assert` supplies no other way.
 
+## Symlinked Subpackages
+
+A fill descends into a symlinked subpackage, which is usually what you want — a
+subpackage linked into a shared directory or a sibling checkout is registered like any
+other. But a tree can offer two names for one directory, and a directory is registered
+once per *directory*, not once per path that reaches it:
+
+```python
+# aliased/plugins/widget.py       defines Widget
+# aliased/plugins_alias -> aliased/plugins
+
+Registry.fill_registry(path=".../aliased", module="aliased")
+Registry.registry()
+# ['widget']                      one entry, module aliased.plugins.widget
+```
+
+Before SWE-40 that registered `widget` twice, once under each name. The two imports
+produce two distinct class objects, so the identity dedupe in `register` could not see
+they were the same class, and `Factory.create("widget")` then refused the key as
+ambiguous — a convenience symlink made the package unusable. A self-referential link
+(`loop -> .`) was worse: the walk recursed until the kernel refused the 41st link, so
+one class came back as 41 entries under 41 module names.
+
+Where two names compete, the first in walk order wins. Walk order is alphabetical, so
+which one that is stays the same between runs and between machines, and a snapshot taken
+on one records a module name that imports on the other.
+
+A link that is the *only* route to a directory is still followed and still registered —
+revisits are skipped, links are not. `lazy_audit` walks by the same rule, which matters
+because `eager="auto"` audits every module before it fills anything.
+
 ## Custom Error Handling
 
 Handle factory errors appropriately:
@@ -553,7 +584,9 @@ Symlinked directories are followed, because filling follows them: a subpackage t
 link into a shared directory or another checkout is walked and registered, so the digest
 has to cover it or verification would pass over renamed and added classes. A directory
 the walk reaches twice — or a loop — is hashed once and noted as a revisit, so the link
-itself still shows up in the digest without the walk running away.
+itself still shows up in the digest without the walk running away. The fill applies the
+same rule to deciding what to register (see [Symlinked Subpackages](#symlinked-subpackages));
+the two have to agree about which directories are in scope.
 
 A `relative_path` that is absolute or climbs out of its root package is refused when the
 snapshot is read, rather than resolved: it decides which directory gets verified, so a

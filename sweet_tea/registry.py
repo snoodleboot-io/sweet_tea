@@ -998,6 +998,7 @@ class Registry:
         exclude: Iterable[str] | None = None,
         lazy: bool | str = False,
         eager: Iterable[str] | str | None = None,
+        _visited: set[tuple[int, int]] | None = None,
     ) -> None:
         """
         Recursively scan and register classes from packages starting from the given path.
@@ -1025,6 +1026,12 @@ class Registry:
         Excluding a package prunes its whole subtree, so a single pattern is enough to
         drop everything beneath it.
 
+        A directory is walked once per *directory*, not once per path that reaches it.
+        Symlinked subpackages are descended into, so a tree can offer two names for one
+        directory — or, with a loop, unboundedly many — and walking each would register
+        the same classes again under a second module name. Where two names compete the
+        first in walk order wins, which is alphabetical and therefore reproducible.
+
         Args:
             path: Package path where modules are located. If None, uses the caller's module path.
             module: Name of the root module. If None, inferred from path.
@@ -1045,6 +1052,9 @@ class Registry:
                 The reserved value ``"auto"`` — alone, or among the patterns — audits
                 each module and imports the ones that would not survive lazy filling
                 (see :meth:`lazy_audit`), leaving the rest lazy.
+            _visited: Internal. Directories this walk has already entered, carried
+                through the recursion so a directory reachable by more than one path is
+                entered once. Callers leave it alone; a fresh set starts each walk.
 
         Raises:
             SweetTeaError: When ``eager`` is given without ``lazy``, which would
@@ -1083,6 +1093,33 @@ class Registry:
 
         # Location of package
         pkg_dir = path_str
+
+        # Revisit tracking keyed by (device, inode) rather than by path, because the
+        # walk follows symlinks and a directory reached twice was a directory
+        # registered twice. A sibling link -- plugins_alias -> plugins -- gave one
+        # class two entries under two module names, and since the two imports produce
+        # two distinct class objects the identity dedupe in register() cannot see they
+        # are the same thing; create() then reported the key ambiguous and the package
+        # was unusable. A self-referential link -- loop -> . -- recursed until the
+        # kernel's 40-symlink limit stopped it, 41 entries deep, so the bound was the
+        # file system's rather than ours (SWE-40).
+        #
+        # SnapshotSource.digest_of already does exactly this and explains at length why
+        # it must; the reason it follows links at all is that this walk does. The two
+        # have to agree about which directories are in scope, and only one of them was
+        # keeping its side of that.
+        visited = set() if _visited is None else _visited
+        directory_identity = SnapshotSource.directory_identity(pkg_dir)
+        if directory_identity is not None:
+            if directory_identity in visited:
+                # Logged rather than warned: a convenience symlink is a reasonable
+                # thing to have, and the fill is doing the right thing with it.
+                cls.__logger.debug(
+                    f"Skipping {module}: {pkg_dir} is a second name for a directory "
+                    f"this fill has already walked"
+                )
+                return
+            visited.add(directory_identity)
 
         # Remember the tree so a snapshot can record what it was built from. Only
         # roots are kept: this method recurses into subpackages, and a module whose
@@ -1163,6 +1200,7 @@ class Registry:
                     exclude=exclude_patterns,
                     lazy=lazy,
                     eager=eager_values if lazy else None,
+                    _visited=visited,
                 )
 
     @classmethod
@@ -1202,6 +1240,7 @@ class Registry:
         path: str | None = None,
         module: str | None = None,
         exclude: Iterable[str] | None = None,
+        _visited: set[tuple[int, int]] | None = None,
     ) -> list[AuditFinding]:
         """
         Report what in a package would not survive ``fill_registry(lazy=True)``.
@@ -1220,6 +1259,7 @@ class Registry:
             module: Name of the root module. If None, inferred from path.
             exclude: Glob patterns for modules to skip, matched as in
                 :meth:`fill_registry`.
+            _visited: Internal, as in :meth:`fill_registry`.
 
         Returns:
             Findings from every module walked, grouped by module in walk order.
@@ -1237,6 +1277,18 @@ class Registry:
         path_str = str(path)
         if module is None:
             module = os.path.basename(path_str)
+
+        # Walks what fill_registry walks, so it skips a revisited directory for the
+        # same reason and by the same rule (SWE-40). Without it an audit double-reports
+        # every finding behind an aliased subpackage, and never finishes at all behind
+        # a symlink loop -- and an audit that will not finish is what eager="auto"
+        # calls before it can fill anything.
+        visited = set() if _visited is None else _visited
+        directory_identity = SnapshotSource.directory_identity(path_str)
+        if directory_identity is not None:
+            if directory_identity in visited:
+                return []
+            visited.add(directory_identity)
 
         exclude_patterns = tuple(exclude or ())
         findings: list[AuditFinding] = []
@@ -1259,6 +1311,7 @@ class Registry:
                         path=os.path.join(path_str, name),
                         module=child,
                         exclude=exclude_patterns,
+                        _visited=visited,
                     )
                 )
                 continue
