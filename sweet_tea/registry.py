@@ -440,6 +440,11 @@ class Registry:
         and their position inside their root package, so :meth:`load` can tell whether
         the snapshot still matches the code wherever that package is installed.
 
+        Each entry records whether its name was scanned or asked for. That is not a
+        detail: it decides whether discovery may overrule the entry when the module is
+        imported, and a snapshot that dropped it registered every guess a lazy fill
+        made as though a caller had requested it (SWE-41).
+
         Args:
             path: Destination file.
 
@@ -469,6 +474,10 @@ class Registry:
                         class_def=f"{module}:{attribute}",
                         library=entry.library,
                         label=entry.label,
+                        # Whether the name was scanned or asked for decides who wins
+                        # when the module is imported, so it has to be written down.
+                        # Without it every guess came back as a request (SWE-41).
+                        provisional=entry.provisional,
                     )
                 )
 
@@ -516,6 +525,13 @@ class Registry:
         snapshot cheaper than a fill rather than merely different: the walk, the parse
         and the imports are all skipped.
 
+        A snapshot of a lazily filled tree holds names a scan guessed at, and those
+        stay guesses: they are registered provisionally, so importing the module lets
+        discovery overrule them, and ``export`` → ``load`` → ``resolve_all`` ends where
+        a fill of the same tree ends. A snapshot written by format 3 or earlier does
+        not record which names were guesses, and is read as though all of them were —
+        see :meth:`~sweet_tea.registry_snapshot.RegistrySnapshot.read`.
+
         Args:
             path: Snapshot file to read.
             verify: Whether to check the recorded source digests against the files on
@@ -544,6 +560,15 @@ class Registry:
                 )
 
         with cls.__lock:
+            # Captured before anything is registered, so the restore below can tell a
+            # pair this load introduced from one that was already there.
+            fill_ownership = {
+                (module_name, pair): from_fill
+                for module_name, pairs in cls.__unresolved.items()
+                for pair, (_, from_fill) in pairs.items()
+            }
+            touched: set[tuple[str, tuple[str, str]]] = set()
+
             for snapshot_entry in snapshot.entries:
                 try:
                     module, attribute = snapshot_entry.coordinates
@@ -559,7 +584,32 @@ class Registry:
                     attribute=attribute,
                     library=snapshot_entry.library,
                     label=snapshot_entry.label,
+                    provisional=snapshot_entry.provisional,
                 )
+                touched.add(
+                    (
+                        module,
+                        (snapshot_entry.library.lower(), snapshot_entry.label.lower()),
+                    )
+                )
+
+            if snapshot.version < 4:
+                # register_lazy infers "a fill established this (library, label)" from
+                # provisional, which is right when the scanner is calling it and wrong
+                # here: reading every entry of an older snapshot as a guess would also
+                # claim every pair in it for a fill that never happened, including the
+                # pair an explicit alias contributed. Discovery's whole class list then
+                # lands under that pair too, so one class came back under two libraries
+                # and its key stopped resolving -- SWE-35 again, by a different route.
+                # So an older snapshot registers guesses but claims nothing, and the
+                # ownership each pair had before this load is put back exactly.
+                for key in touched:
+                    module_name, pair = key
+                    scanned, _ = cls.__unresolved[module_name][pair]
+                    cls.__unresolved[module_name][pair] = (
+                        scanned,
+                        fill_ownership.get(key, False),
+                    )
 
             cls.__skipped.update(snapshot.skipped)
 

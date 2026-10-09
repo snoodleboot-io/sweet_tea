@@ -25,6 +25,11 @@ class SnapshotEntry(BaseModel):
     ``Entry.class_def`` is a live class and cannot be serialised. Here it becomes
     ``module:attribute`` — the same coordinates a lazily registered entry carries — so
     reading a snapshot back produces lazy entries that resolve on use.
+
+    ``provisional`` travels with the entry because it decides who wins when the module
+    is finally imported. A scanned name is a guess and loses to discovery; an explicit
+    registration is a request and is kept (SWE-20). Leaving it out of the written form
+    made every guess come back as a request, which is the whole of SWE-41.
     """
 
     key: str = Field(
@@ -40,6 +45,14 @@ class SnapshotEntry(BaseModel):
     library: str = Field(default="", description="Library this class belongs to")
 
     label: str = Field(default="", description="Label categorising this class")
+
+    provisional: bool = Field(
+        default=False,
+        description=(
+            "True when the name was read out of source rather than asked for, so "
+            "discovery overrules it once the module is imported"
+        ),
+    )
 
     @property
     def coordinates(self) -> tuple[str, str]:

@@ -614,11 +614,11 @@ positive integer no greater than this reader's format.
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "sources": [{"module": "myapp", "path": "/srv/myapp", "relative_path": ".",
                "digest": "..."}],
   "entries": [{"key": "database_connection", "class_def": "myapp.db:DatabaseConnection",
-               "library": "myapp", "label": ""}],
+               "library": "myapp", "label": "", "provisional": false}],
   "skipped": {"myapp.optional_backend":
                 "missing optional dependency: ModuleNotFoundError: No module named 'redis'"}
 }
@@ -627,19 +627,40 @@ positive integer no greater than this reader's format.
 `class_def` is `module:attribute` — the attribute the class is *bound to*, which is how
 the registry keys it and is not always the class's own `__name__`.
 
+`provisional` says whether the name was read out of source or asked for. It decides who
+wins when the module is finally imported: a scanned name is a guess and discovery
+overrules it, an explicit registration is a request and is kept. Leaving it out of the
+file made every guess come back as a request, so a snapshot of a lazily filled tree
+registered names the package never defined — one of them a class from another
+distribution, under this library's name (SWE-41). With it recorded, `export` → `load` →
+`resolve_all` lands exactly where a fill of the same tree lands.
+
 `path` is where the tree sat when the snapshot was written; `relative_path` is the same
 directory relative to its root package's own directory — `"."` when the filled module
 *is* the root, `"sub"` when `myapp.sub` was filled. Verification prefers the relative
 one, which is why a shipped snapshot still works.
 
-`version` is 3. Format 2 added `relative_path`; format 3 changed how a digest is
+`version` is 4. Format 2 added `relative_path`; format 3 changed how a digest is
 computed — the records inside it are framed, and symlinked subpackages are followed — so
-the same unchanged tree hashes to a different value than it did before. Both halves of
-that are reasons to move the version rather than change behaviour quietly: a sweet_tea
-that predates either refuses a newer file outright and says so, instead of ignoring what
-it does not know and reaching the wrong verdict. An older snapshot still parses here, but
-its digest was computed under the older rules, so verification will call it stale; the
-answer either way is the one the error gives — re-export it.
+the same unchanged tree hashes to a different value than it did before; format 4 added
+`provisional`. Each is a reason to move the version rather than change behaviour quietly:
+a sweet_tea that predates any of them refuses a newer file outright and says so, instead
+of ignoring what it does not know and reaching the wrong verdict. An older snapshot still
+parses here, but its digest was computed under the older rules, so verification will call
+it stale; the answer either way is the one the error gives — re-export it.
+
+A format 3 or earlier snapshot read here records no provenance, so every name in it is
+read as a guess and `load` warns. That is the safe direction — a guess read as a request
+is the bug above — and it costs less than it sounds like: a guess is only overruled where
+discovery disagrees, so a name genuinely bound to a class in the module it names survives
+either way, aliases included. What is lost is a name discovery cannot confirm (an alias
+pointing at a re-export, whose class belongs to another module) and a class only
+discovery can see (one built at runtime, where no scan reaches it), because `load` also
+declines to treat an older file's `(library, label)` pairs as filled — it cannot tell
+which of them a fill established, and assuming they all were registered one class under
+two libraries and made its key ambiguous. Both costs are names that go missing rather
+than names that appear wrongly, and both are repaired by re-exporting. Escalating
+`SweetTeaWarning` to an error turns the warning into a refusal.
 
 Skips are recorded on purpose. Filling warns and skips a module whose import raises; a
 snapshot that dropped that would bake in the install profile *and the platform* of the
