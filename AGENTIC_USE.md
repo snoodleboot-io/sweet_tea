@@ -234,6 +234,14 @@ version 3; the framing inside the digest changed with it, so every digest value 
 An older snapshot parses but verifies as stale, and a reader that predates a format
 refuses the newer file rather than mis-judging it; re-export either way.
 
+Each entry records `provisional` — whether the name was scanned or asked for (format
+version 4). It decides who wins when the module is imported: discovery overrules a
+guess, and keeps a request. Without it every guess loaded as a request, so a snapshot
+of a lazily filled tree registered classes the package never defined, including one
+from another distribution under this library's name. A format 3 or earlier file reads
+every entry as a guess and warns; it then loses a name discovery cannot confirm and a
+class only discovery can see, which is the safe direction and is fixed by re-exporting.
+
 `export` writes a temporary file beside the destination and renames it over the
 destination, so a concurrent `load` — in this process or another — reads the old
 snapshot or the new one, never a truncated one. No lock is held across the file I/O.

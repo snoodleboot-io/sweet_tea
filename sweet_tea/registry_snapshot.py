@@ -19,6 +19,7 @@ import json
 import os
 import stat
 import tempfile
+import warnings
 from typing import ClassVar
 
 from pydantic import BaseModel, Field
@@ -26,6 +27,7 @@ from pydantic import BaseModel, Field
 from sweet_tea.snapshot_entry import SnapshotEntry
 from sweet_tea.snapshot_source import SnapshotSource
 from sweet_tea.sweet_tea_error import SweetTeaError
+from sweet_tea.sweet_tea_warning import SweetTeaWarning
 
 
 class RegistrySnapshot(BaseModel):
@@ -62,7 +64,14 @@ class RegistrySnapshot(BaseModel):
     #: by a sweet_tea that predates the framing is refused outright and says precisely
     #: why. The remedy in both directions is to re-export, and the version is what lets
     #: a reader say so.
-    FORMAT_VERSION: ClassVar[int] = 3
+    #:
+    #: 4 added ``provisional`` to each entry (SWE-41). Omitting it was not a loss of
+    #: detail either: a reader that cannot tell a scanned name from a requested one
+    #: treats every scanned name as requested, which registers classes the package
+    #: never defined and lets them shadow real registrations. A format 3 file still
+    #: loads here, with every entry read as a guess, and :meth:`read` warns about what
+    #: reading it that way costs.
+    FORMAT_VERSION: ClassVar[int] = 4
 
     version: int = Field(
         default=FORMAT_VERSION,
@@ -182,6 +191,29 @@ class RegistrySnapshot(BaseModel):
         """
         Read a snapshot from a file.
 
+        A snapshot written by format 3 or earlier records no provenance for its
+        entries, so there is no way to tell which of its names a scan guessed at. Every
+        entry is read as a guess, which is the safe direction: a guess read as a guess
+        is overruled by discovery when its module is imported, whereas a guess read as
+        a request registers classes the package never defined and lets them shadow real
+        registrations (SWE-41).
+
+        Reading them as guesses is not free, which is why it warns rather than happening
+        quietly. A guess is only overruled where discovery disagrees, so a name that
+        really is bound to a class in its own module survives either way — including an
+        explicit alias, which is the common case. What an older snapshot loses is a name
+        discovery cannot confirm: an alias pointing at a re-export, whose class belongs
+        to another module. :meth:`~sweet_tea.registry.Registry.load` also declines to
+        treat an older snapshot's ``(library, label)`` pairs as fill-owned, since it
+        cannot tell which of them a fill established, so a class only *discovery* can
+        see — built at runtime, where no scan reaches it — is not registered from an
+        older snapshot where a lazy fill of the same tree would have found it.
+
+        Both costs are paid in names that go missing rather than names that appear
+        wrongly, and both are repaired by re-exporting. Escalating
+        :class:`~sweet_tea.sweet_tea_warning.SweetTeaWarning` to an error turns the
+        warning into the refusal a caller who would rather re-export now wants.
+
         Args:
             path: Snapshot file to read.
 
@@ -213,6 +245,23 @@ class RegistrySnapshot(BaseModel):
                 f"understands up to {cls.FORMAT_VERSION}. Rebuild it with "
                 f"Registry.export()."
             )
+
+        if snapshot.version < 4 and snapshot.entries:
+            # Mutated rather than rebuilt: the field is the only thing being decided
+            # and the rest of the entry is already what it should be.
+            for entry in snapshot.entries:
+                entry.provisional = True
+            warnings.warn(
+                f"Snapshot {path} is version {snapshot.version}, which records no "
+                f"provenance for its entries, so every name in it is read as one a "
+                f"scan guessed at. Discovery overrules a guess it cannot confirm, so "
+                f"this snapshot registers no name whose class belongs to another "
+                f"module, and no class that only discovery can see. Re-export it to "
+                f"record which names were asked for.",
+                SweetTeaWarning,
+                stacklevel=2,
+            )
+
         return snapshot
 
     def stale_sources(self) -> list[SnapshotSource]:

@@ -160,7 +160,10 @@ class TestSnapshotRoundTrip(TestCase):
 
         self.assertTrue(payload["entries"])
         for written in payload["entries"]:
-            self.assertEqual(set(written), {"key", "class_def", "library", "label"})
+            self.assertEqual(
+                set(written),
+                {"key", "class_def", "library", "label", "provisional"},
+            )
             # SnapshotEntry.class_def is the module:attribute string, not a class.
             self.assertIsInstance(written["class_def"], str)
 
@@ -429,9 +432,9 @@ class TestSnapshotRelocation(TestCase):
 
         payload = self.written()
 
-        # 3 since SWE-28 framed the digest records: the field this test is about
+        # 4 since SWE-41 recorded entry provenance: the field this test is about
         # arrived in 2, but the version says what the whole format is.
-        self.assertEqual(payload["version"], 3)
+        self.assertEqual(payload["version"], 4)
         for source in payload["sources"]:
             self.assertEqual(set(source), {"module", "path", "relative_path", "digest"})
         self.assertEqual(payload["sources"][0]["relative_path"], ".")
