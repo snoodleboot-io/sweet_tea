@@ -495,19 +495,36 @@ class TestExplicitLazyEntriesSurviveResolution(TestCase):
         self.assertEqual(entry.label, "alias")
         self.assertEqual(entry.class_object.__name__, "Plain")
 
-    def test_alias_and_discovered_name_are_both_registered(self):
-        """Two keys for one class: the alias joins discovery's entry, it does not replace it."""
+    def test_an_alias_alone_registers_only_the_alias(self):
+        """Resolving one alias must not register the rest of its module.
+
+        This asserted the opposite until SWE-35 — that ``plain`` appeared too. It
+        did, and that was the defect: nothing had filled this tree, so handing the
+        alias's (library, label) discovery's whole class list gave the consumer
+        every class in the module under their own label, and made keys they never
+        touched ambiguous.
+        """
         self.register_alias()
         Registry.ensure_resolved(["my_alias"])
 
         keys = keys_now()
         self.assertIn("my_alias", keys)
-        self.assertIn("plain", keys)
+        self.assertNotIn("plain", keys)
+
+    def test_an_alias_joins_a_fill_rather_than_replacing_it(self):
+        """With a fill in place, both keys exist and name the same class."""
+        fill(lazy=True)
+        self.register_alias()
+        Registry.ensure_resolved(["my_alias"])
+
         classes = {
             entry.key: entry.class_object
             for entry in Registry.entries()
             if entry.key in {"my_alias", "plain"}
         }
+
+        self.assertIn("my_alias", classes)
+        self.assertIn("plain", classes)
         self.assertIs(classes["my_alias"], classes["plain"])
 
     def test_recategorised_registration_survives(self):
