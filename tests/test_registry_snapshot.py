@@ -4,8 +4,10 @@ walking or importing a package tree.
 """
 
 import importlib
+import importlib.machinery
 import json
 import os
+import py_compile
 import shutil
 import sys
 import tempfile
@@ -801,6 +803,215 @@ class TestSnapshotDigestFraming(TestCase):
         self.assertEqual(
             SnapshotSource.digest_of(self.tree("left", files)),
             SnapshotSource.digest_of(self.tree("right", files)),
+        )
+
+
+class TestSnapshotDigestCoversEveryImportableFile(TestCase):
+    """SWE-44: the digest must see every file the fill is willing to import from."""
+
+    # The tagged suffix, where this interpreter has one, so that a module name taken
+    # from an extension file is the module's own name and not the build tag with it.
+    EXTENSION_SUFFIX = max(importlib.machinery.EXTENSION_SUFFIXES, key=len)
+    BYTECODE_SUFFIX = importlib.machinery.BYTECODE_SUFFIXES[0]
+
+    def setUp(self):
+        reset_registry()
+        self.directory = tempfile.mkdtemp()
+        self.package = os.path.join(self.directory, "mixedpkg")
+        os.makedirs(self.package)
+        open(os.path.join(self.package, "__init__.py"), "w").close()
+        self.path = os.path.join(self.directory, "registry.json")
+        self.on_path: list[str] = []
+
+    def tearDown(self):
+        reset_registry()
+        for name in [
+            n for n in sys.modules if n == "mixedpkg" or n.startswith("mixedpkg.")
+        ]:
+            del sys.modules[name]
+        for entry in self.on_path:
+            while entry in sys.path:
+                sys.path.remove(entry)
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def importable(self) -> None:
+        """Make the package under the temporary directory the one an import finds."""
+        sys.path.insert(0, self.directory)
+        self.on_path.append(self.directory)
+        importlib.invalidate_caches()
+
+    def write_source(self, name: str, body: str) -> str:
+        """Write a module into the package and return its path."""
+        full_path = os.path.join(self.package, name)
+        with open(full_path, "w") as handle:
+            handle.write(body)
+        return full_path
+
+    def write_sourceless(self, name: str, body: str) -> str:
+        """Compile a module to bytecode beside its siblings and drop the source."""
+        # Compiled outside the tree, so the source it was built from is never part of
+        # the digest: a sourceless deployment ships the bytecode and nothing else.
+        source = os.path.join(self.directory, f"{name}.py")
+        with open(source, "w") as handle:
+            handle.write(body)
+        compiled = os.path.join(self.package, f"{name}{self.BYTECODE_SUFFIX}")
+        py_compile.compile(source, cfile=compiled, doraise=True)
+        os.remove(source)
+        return compiled
+
+    def write_extension(self, name: str, body: bytes) -> str:
+        """Write a file named as an extension module. Nothing imports it."""
+        full_path = os.path.join(self.package, f"{name}{self.EXTENSION_SUFFIX}")
+        with open(full_path, "wb") as handle:
+            handle.write(body)
+        return full_path
+
+    def fill_and_export(self) -> None:
+        """Fill from the package and write the snapshot, as a build step would."""
+        with warnings.catch_warnings():
+            # A file named like an extension module but holding no library cannot be
+            # imported; the fill records it as skipped, which is not what is under test.
+            warnings.simplefilter("ignore", SweetTeaWarning)
+            Registry.fill_registry(path=self.package, module="mixedpkg", lazy=True)
+        Registry.export(self.path)
+        reset_registry()
+
+    def test_a_sourceless_module_registers(self):
+        """The premise: a snapshot names classes the fill found in a bare .pyc."""
+        self.write_sourceless("sourceless", "class Sourceless:\n    pass\n")
+        self.importable()
+
+        self.fill_and_export()
+
+        self.assertEqual(
+            ["sourceless"],
+            [entry.key for entry in RegistrySnapshot.read(self.path).entries],
+        )
+
+    def test_a_deleted_sourceless_module_is_refused(self):
+        """A snapshot cannot stay true when the only file behind a name is gone."""
+        compiled = self.write_sourceless("sourceless", "class Sourceless:\n    pass\n")
+        self.importable()
+        self.fill_and_export()
+
+        os.remove(compiled)
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Registry.load(self.path)
+        self.assertIn("no longer matches", str(raised.exception))
+
+    def test_a_recompiled_sourceless_module_is_refused(self):
+        """Bytecode that is the module itself is content, so editing it is a change."""
+        self.write_sourceless("sourceless", "class Sourceless:\n    pass\n")
+        before = SnapshotSource.digest_of(self.package)
+
+        self.write_sourceless("sourceless", "class Renamed:\n    pass\n")
+
+        self.assertNotEqual(SnapshotSource.digest_of(self.package), before)
+
+    def test_a_replaced_extension_module_is_refused(self):
+        """A rebuilt .so is exactly the staleness verification exists to catch."""
+        self.write_source("thing.py", "class Thing:\n    pass\n")
+        extension = self.write_extension("accel", b"old build")
+        self.importable()
+        self.fill_and_export()
+
+        with open(extension, "wb") as handle:
+            handle.write(b"new build")
+
+        with self.assertRaises(SweetTeaError) as raised:
+            Registry.load(self.path)
+        self.assertIn("no longer matches", str(raised.exception))
+
+    def test_a_removed_extension_module_changes_the_digest(self):
+        """An extension going missing is a tree difference like any other."""
+        self.write_source("thing.py", "class Thing:\n    pass\n")
+        extension = self.write_extension("accel", b"a compiled module")
+        before = SnapshotSource.digest_of(self.package)
+
+        os.remove(extension)
+
+        self.assertNotEqual(SnapshotSource.digest_of(self.package), before)
+
+    def test_an_extension_module_of_the_same_size_still_moves_the_digest(self):
+        """Extensions are hashed, not measured: a same-length rebuild is a change."""
+        extension = self.write_extension("accel", b"aaaa")
+        before = SnapshotSource.digest_of(self.package)
+
+        with open(extension, "wb") as handle:
+            handle.write(b"bbbb")
+
+        self.assertNotEqual(SnapshotSource.digest_of(self.package), before)
+
+    def test_compiled_bytecode_does_not_move_the_digest(self):
+        """__pycache__ is derived, so recompiling may not make a snapshot stale."""
+        source = self.write_source("thing.py", "class Thing:\n    pass\n")
+        before = SnapshotSource.digest_of(self.package)
+        cache = os.path.join(self.package, "__pycache__")
+        os.makedirs(cache, exist_ok=True)
+
+        for tag in ("cpython-312", "cpython-313"):
+            py_compile.compile(
+                source, cfile=os.path.join(cache, f"thing.{tag}.pyc"), doraise=True
+            )
+
+        self.assertEqual(SnapshotSource.digest_of(self.package), before)
+
+    def test_bytecode_beside_its_own_source_does_not_move_the_digest(self):
+        """In the legacy layout too, a .pyc with a source beside it is an artifact."""
+        source = self.write_source("thing.py", "class Thing:\n    pass\n")
+        before = SnapshotSource.digest_of(self.package)
+
+        py_compile.compile(
+            source,
+            cfile=os.path.join(self.package, f"thing{self.BYTECODE_SUFFIX}"),
+            doraise=True,
+        )
+
+        self.assertEqual(SnapshotSource.digest_of(self.package), before)
+
+    def test_bytecode_shadowed_by_an_extension_does_not_move_the_digest(self):
+        """The machinery prefers the extension, so that .pyc is not the module."""
+        self.write_extension("accel", b"a compiled module")
+        shadowed = os.path.join(self.package, f"accel{self.BYTECODE_SUFFIX}")
+        with open(shadowed, "wb") as handle:
+            handle.write(b"stale bytecode")
+        before = SnapshotSource.digest_of(self.package)
+
+        with open(shadowed, "wb") as handle:
+            handle.write(b"other stale bytecode")
+
+        self.assertEqual(SnapshotSource.digest_of(self.package), before)
+
+    def test_covered_files_names_the_files_an_import_could_come_from(self):
+        """Which file decides a module is the one the import machinery would pick."""
+        extension = f"accel{self.EXTENSION_SUFFIX}"
+        names = (
+            "thing.py",
+            f"thing{self.BYTECODE_SUFFIX}",
+            extension,
+            f"accel{self.BYTECODE_SUFFIX}",
+            f"sourceless{self.BYTECODE_SUFFIX}",
+            "data.json",
+            "README",
+            self.BYTECODE_SUFFIX,
+        )
+
+        self.assertEqual(
+            (extension, f"sourceless{self.BYTECODE_SUFFIX}", "thing.py"),
+            SnapshotSource.covered_files(names),
+        )
+
+    def test_the_same_tree_digests_the_same_wherever_it_sits(self):
+        """SWE-18: a shipped snapshot has to verify away from where it was built."""
+        self.write_source("thing.py", "class Thing:\n    pass\n")
+        self.write_sourceless("sourceless", "class Sourceless:\n    pass\n")
+        self.write_extension("accel", b"a compiled module")
+        elsewhere = os.path.join(self.directory, "elsewhere", "mixedpkg")
+        shutil.copytree(self.package, elsewhere)
+
+        self.assertEqual(
+            SnapshotSource.digest_of(self.package), SnapshotSource.digest_of(elsewhere)
         )
 
 
