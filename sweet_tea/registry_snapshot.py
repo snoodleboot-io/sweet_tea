@@ -71,7 +71,17 @@ class RegistrySnapshot(BaseModel):
     #: never defined and lets them shadow real registrations. A format 3 file still
     #: loads here, with every entry read as a guess, and :meth:`read` warns about what
     #: reading it that way costs.
-    FORMAT_VERSION: ClassVar[int] = 4
+    #:
+    #: 5 widened what a source digest covers (SWE-44): sourceless bytecode and
+    #: extension modules are hashed, because the fill imports and registers from them.
+    #: Unlike 3, this does not move every digest value — a tree of nothing but sources
+    #: hashes exactly as it did, which is almost every tree. It moves the digest of a
+    #: tree holding a compiled or sourceless module, and those are the digests that
+    #: were wrong: before this, a tree with a sourceless module and a tree without it
+    #: hashed *identically*, so verification could not tell them apart. A format 4 file
+    #: still loads here, and re-verifies as stale only if its tree contains such a
+    #: module.
+    FORMAT_VERSION: ClassVar[int] = 5
 
     version: int = Field(
         default=FORMAT_VERSION,
@@ -246,6 +256,8 @@ class RegistrySnapshot(BaseModel):
                 f"Registry.export()."
             )
 
+        # 4 is where provisional arrived, not the current version: a format 4 file
+        # records provenance and is read as it stands.
         if snapshot.version < 4 and snapshot.entries:
             # Mutated rather than rebuilt: the field is the only thing being decided
             # and the rest of the entry is already what it should be.

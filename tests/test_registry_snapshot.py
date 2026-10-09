@@ -434,9 +434,10 @@ class TestSnapshotRelocation(TestCase):
 
         payload = self.written()
 
-        # 4 since SWE-41 recorded entry provenance: the field this test is about
-        # arrived in 2, but the version says what the whole format is.
-        self.assertEqual(payload["version"], 4)
+        # Written at whatever the current format is: the field this test is about
+        # arrived in 2, but the version says what the whole format is, and it has
+        # moved three times since for reasons that have nothing to do with it.
+        self.assertEqual(payload["version"], RegistrySnapshot.FORMAT_VERSION)
         for source in payload["sources"]:
             self.assertEqual(set(source), {"module", "path", "relative_path", "digest"})
         self.assertEqual(payload["sources"][0]["relative_path"], ".")
@@ -1001,6 +1002,32 @@ class TestSnapshotDigestCoversEveryImportableFile(TestCase):
             (extension, f"sourceless{self.BYTECODE_SUFFIX}", "thing.py"),
             SnapshotSource.covered_files(names),
         )
+
+    def test_two_trees_differing_only_by_a_sourceless_module_differ(self):
+        """
+        The sharpest form of the bug: not just a missed change, a collision.
+
+        Before SWE-44 a tree holding a sourceless module and an otherwise identical
+        tree without it hashed to the *same* digest, so verification could not tell
+        them apart at all — it was not that a change went unnoticed, it was that the
+        two trees were indistinguishable. The one-way tests above would also pass for
+        a digest that merely salted every tree; this one would not.
+        """
+        self.write_source("shared.py", "class Shared:\n    pass\n")
+        without = SnapshotSource.digest_of(self.package)
+
+        self.write_sourceless("extra", "class Extra:\n    pass\n")
+
+        self.assertNotEqual(without, SnapshotSource.digest_of(self.package))
+
+    def test_two_trees_differing_only_by_an_extension_module_differ(self):
+        """The same point for a compiled extension, which is the ordinary case."""
+        self.write_source("shared.py", "class Shared:\n    pass\n")
+        without = SnapshotSource.digest_of(self.package)
+
+        self.write_extension("accel", b"\x00not really a library")
+
+        self.assertNotEqual(without, SnapshotSource.digest_of(self.package))
 
     def test_the_same_tree_digests_the_same_wherever_it_sits(self):
         """SWE-18: a shipped snapshot has to verify away from where it was built."""

@@ -628,7 +628,7 @@ positive integer no greater than this reader's format.
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "sources": [{"module": "myapp", "path": "/srv/myapp", "relative_path": ".",
                "digest": "..."}],
   "entries": [{"key": "database_connection", "class_def": "myapp.db:DatabaseConnection",
@@ -654,17 +654,22 @@ directory relative to its root package's own directory — `"."` when the filled
 *is* the root, `"sub"` when `myapp.sub` was filled. Verification prefers the relative
 one, which is why a shipped snapshot still works.
 
-`version` is 4. Format 2 added `relative_path`; format 3 changed how a digest is
+`version` is 5. Format 2 added `relative_path`; format 3 changed how a digest is
 computed — the records inside it are framed, and symlinked subpackages are followed — so
 the same unchanged tree hashes to a different value than it did before; format 4 added
-`provisional`. Each is a reason to move the version rather than change behaviour quietly:
-a sweet_tea that predates any of them refuses a newer file outright and says so, instead
-of ignoring what it does not know and reaching the wrong verdict. An older snapshot still
-parses here, but its digest was computed under the older rules, so verification will call
-it stale; the answer either way is the one the error gives — re-export it. Widening the
-digest to every importable file, rather than sources alone, moved every digest value for
-that same reason: a snapshot written before it records an unchanged tree under narrower
-rules, and re-exporting is what reconciles them.
+`provisional`; format 5 widened the digest to every importable file rather than sources
+alone. Each is a reason to move the version rather than change behaviour quietly: a
+sweet_tea that predates any of them refuses a newer file outright and says so, instead of
+ignoring what it does not know and reaching the wrong verdict. An older snapshot still
+parses here, but its digest was computed under the older rules, so verification may call
+it stale; the answer either way is the one the error gives — re-export it.
+
+Format 5 is narrower than format 3 in what it disturbs. A tree of nothing but sources
+hashes exactly as it did, which is almost every tree, so almost no existing snapshot
+re-verifies as stale. What moves is the digest of a tree holding a compiled or sourceless
+module — and those were the digests that were wrong: before this, a tree holding a
+sourceless module and an otherwise identical tree without it hashed *identically*, so
+verification could not tell them apart at all.
 
 A format 3 or earlier snapshot read here records no provenance, so every name in it is
 read as a guess and `load` warns. That is the safe direction — a guess read as a request

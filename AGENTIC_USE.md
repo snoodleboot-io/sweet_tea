@@ -239,8 +239,9 @@ It covers every file a module could be imported from, not just `.py`: a sourcele
 rebuilding one is a difference the digest sees. Extensions are hashed in full, because
 mtime does not survive installation and size alone misses a same-length rebuild.
 `__pycache__`, and a `.pyc` with its own source beside it, are ignored as derived — only
-bytecode that is the whole of its module counts. Widening the coverage moved every digest
-value again, so re-export snapshots written before it.
+bytecode that is the whole of its module counts. This is format version 5, and it leaves
+a source-only tree hashing exactly as before; what moves is a tree holding a compiled or
+sourceless module, which previously hashed the same as one without it.
 
 Each entry records `provisional` — whether the name was scanned or asked for (format
 version 4). It decides who wins when the module is imported: discovery overrules a
