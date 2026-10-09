@@ -1491,15 +1491,28 @@ a module costs its own classes and no others:</p>
 <code>SweetTeaError</code>, so filling over an installed click on Linux abandoned the walk at
 that module: 9 of click's 80 classes registered, and the fill itself failed.</p>
 <p><code>Registry.skipped()</code> maps each such module to
-<code>&lt;category&gt;: &lt;ExceptionType&gt;[: &lt;message&gt;]</code>. The category separates the two things a
+<code>&lt;category&gt;: &lt;ExceptionType&gt;[: &lt;message&gt;]</code>. The category separates the things a
 caller does about them:</p>
 <ul>
-<li><code>missing optional dependency</code> — an <code>ImportError</code>. Install the package, or exclude
-  the module from the fill.</li>
-<li><code>import failed</code> — anything else. A platform guard, or a module wanting an
-  environment it does not have, which is normal and needs nothing; or a genuine bug
-  in that module, which the exception type is there to let you spot.</li>
+<li><code>missing optional dependency</code> — an <code>ImportError</code> from inside the module. Install
+  the package, or exclude the module from the fill.</li>
+<li><code>not importable</code> — nothing of that name could be imported at all. A directory whose
+  name ends in <code>.py</code> is the usual cause: the walk reports it as a module, because the
+  name looks like one, and then no finder will load it. Nothing is missing and nothing
+  ran, so the remedy is the path — rename it, or exclude it from the fill.</li>
+<li><code>import failed</code> — the module was found, its body ran, and it raised. A platform
+  guard, or a module wanting an environment it does not have, which is normal and
+  needs nothing; or a genuine bug in that module, which the exception type is there to
+  let you spot.</li>
 </ul>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"/.../pkg"</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="s2">"pkg"</span><span class="p">)</span>   <span class="c1"># pkg/trap.py is a directory</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">skipped</span><span class="p">()</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="c1"># {'pkg.trap': "not importable: ModuleNotFoundError: No module named 'pkg.trap'"}</span>
+</span></code></pre></div>
+<p><code>not importable</code> is its own category rather than a flavour of <code>import failed</code> because
+the two send you to different places: <code>import failed</code> points at the module's code, and
+there is no code here. Until SWE-45 this read <code>missing optional dependency</code> and advised
+an install, for a dependency that does not exist.</p>
 <p>Nothing from a module that failed is registered: its classes are collected before any
 of them is registered, so a skip is never half-applied.</p>
 <h3 id="source-a-lazy-fill-cannot-read">Source a lazy fill cannot read</h3>
@@ -1519,11 +1532,11 @@ the same thing:</p>
 the PEP 263 coding declaration the way an import does, so it is scanned normally.</p>
 <p>A caller who would rather not continue needs no option for it, because the warning is
 that switch:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sweet_tea.sweet_tea_warning</span><span class="w"> </span><span class="kn">import</span> <span class="n">SweetTeaWarning</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">warnings</span><span class="o">.</span><span class="n">simplefilter</span><span class="p">(</span><span class="s2">"error"</span><span class="p">,</span> <span class="n">SweetTeaWarning</span><span class="p">)</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"..."</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="s2">"myapp"</span><span class="p">)</span>  <span class="c1"># raises on the first skip</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">warnings</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sweet_tea.sweet_tea_warning</span><span class="w"> </span><span class="kn">import</span> <span class="n">SweetTeaWarning</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">warnings</span><span class="o">.</span><span class="n">simplefilter</span><span class="p">(</span><span class="s2">"error"</span><span class="p">,</span> <span class="n">SweetTeaWarning</span><span class="p">)</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">"..."</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="s2">"myapp"</span><span class="p">)</span>  <span class="c1"># raises on the first skip</span>
 </span></code></pre></div>
 <p>The escalated warning is raised from inside the handler for the original exception, so
 its traceback comes out chained to it. The module is recorded in <code>skipped()</code> before the
@@ -1540,12 +1553,12 @@ a class, and there is none — with the exception type in the message, which a b
 subpackage linked into a shared directory or a sibling checkout is registered like any
 other. But a tree can offer two names for one directory, and a directory is registered
 once per <em>directory</em>, not once per path that reaches it:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># aliased/plugins/widget.py       defines Widget</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="c1"># aliased/plugins_alias -&gt; aliased/plugins</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">".../aliased"</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="s2">"aliased"</span><span class="p">)</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="n">Registry</span><span class="o">.</span><span class="n">registry</span><span class="p">()</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="c1"># ['widget']                      one entry, module aliased.plugins.widget</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># aliased/plugins/widget.py       defines Widget</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="c1"># aliased/plugins_alias -&gt; aliased/plugins</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">".../aliased"</span><span class="p">,</span> <span class="n">module</span><span class="o">=</span><span class="s2">"aliased"</span><span class="p">)</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="n">Registry</span><span class="o">.</span><span class="n">registry</span><span class="p">()</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="c1"># ['widget']                      one entry, module aliased.plugins.widget</span>
 </span></code></pre></div>
 <p>Before SWE-40 that registered <code>widget</code> twice, once under each name. The two imports
 produce two distinct class objects, so the identity dedupe in <code>register</code> could not see
@@ -1561,28 +1574,28 @@ revisits are skipped, links are not. <code>lazy_audit</code> walks by the same r
 because <code>eager="auto"</code> audits every module before it fills anything.</p>
 <h2 id="custom-error-handling">Custom Error Handling</h2>
 <p>Handle factory errors appropriately:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sweet_tea</span><span class="w"> </span><span class="kn">import</span> <span class="n">Factory</span><span class="p">,</span> <span class="n">SweetTeaError</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">try</span><span class="p">:</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>    <span class="n">instance</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"nonexistent_key"</span><span class="p">)</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="k">except</span> <span class="n">SweetTeaError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Factory error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sweet_tea</span><span class="w"> </span><span class="kn">import</span> <span class="n">Factory</span><span class="p">,</span> <span class="n">SweetTeaError</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">try</span><span class="p">:</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">instance</span> <span class="o">=</span> <span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"nonexistent_key"</span><span class="p">)</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">except</span> <span class="n">SweetTeaError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Factory error: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="type-safe-abstract-factories">Type-Safe Abstract Factories</h2>
 <p>Use Protocol-based abstract factories for maximum type safety:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Protocol</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sweet_tea</span><span class="w"> </span><span class="kn">import</span> <span class="n">AbstractFactory</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">LoggerProtocol</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">set_level</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">level</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1"># Only classes implementing LoggerProtocol can be created</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="n">logger_factory</span> <span class="o">=</span> <span class="n">AbstractFactory</span><span class="p">[</span><span class="n">LoggerProtocol</span><span class="p">]</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="c1"># Type checker will ensure compliance</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="n">logger</span> <span class="o">=</span> <span class="n">logger_factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"console_logger"</span><span class="p">)</span>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="n">logger</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="s2">"Hello, World!"</span><span class="p">)</span>  <span class="c1"># Type-safe!</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Protocol</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">sweet_tea</span><span class="w"> </span><span class="kn">import</span> <span class="n">AbstractFactory</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">LoggerProtocol</span><span class="p">(</span><span class="n">Protocol</span><span class="p">):</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">set_level</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">level</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="c1"># Only classes implementing LoggerProtocol can be created</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="n">logger_factory</span> <span class="o">=</span> <span class="n">AbstractFactory</span><span class="p">[</span><span class="n">LoggerProtocol</span><span class="p">]</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="c1"># Type checker will ensure compliance</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="n">logger</span> <span class="o">=</span> <span class="n">logger_factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"console_logger"</span><span class="p">)</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="n">logger</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="s2">"Hello, World!"</span><span class="p">)</span>  <span class="c1"># Type-safe!</span>
 </span></code></pre></div>
 <h2 id="performance-considerations">Performance Considerations</h2>
 <ul>
@@ -1600,27 +1613,27 @@ tuple lookup answered its first question forever (SWE-43). Whatever is accepted 
 cached, and whatever is cached is refreshed.</p>
 <h2 id="integration-patterns">Integration Patterns</h2>
 <h3 id="dependency-injection">Dependency Injection</h3>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Application</span><span class="p">:</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">db_factory</span><span class="p">,</span> <span class="n">cache_factory</span><span class="p">):</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">db</span> <span class="o">=</span> <span class="n">db_factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"postgres"</span><span class="p">)</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">cache</span> <span class="o">=</span> <span class="n">cache_factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"redis"</span><span class="p">)</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># Create specialized factories</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="n">db_factory</span> <span class="o">=</span> <span class="n">AbstractFactory</span><span class="p">[</span><span class="n">DatabaseInterface</span><span class="p">]</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="n">cache_factory</span> <span class="o">=</span> <span class="n">AbstractFactory</span><span class="p">[</span><span class="n">CacheInterface</span><span class="p">]</span>
-</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>
-</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="n">app</span> <span class="o">=</span> <span class="n">Application</span><span class="p">(</span><span class="n">db_factory</span><span class="p">,</span> <span class="n">cache_factory</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Application</span><span class="p">:</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">db_factory</span><span class="p">,</span> <span class="n">cache_factory</span><span class="p">):</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">db</span> <span class="o">=</span> <span class="n">db_factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"postgres"</span><span class="p">)</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">cache</span> <span class="o">=</span> <span class="n">cache_factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"redis"</span><span class="p">)</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="c1"># Create specialized factories</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">db_factory</span> <span class="o">=</span> <span class="n">AbstractFactory</span><span class="p">[</span><span class="n">DatabaseInterface</span><span class="p">]</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="n">cache_factory</span> <span class="o">=</span> <span class="n">AbstractFactory</span><span class="p">[</span><span class="n">CacheInterface</span><span class="p">]</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="n">app</span> <span class="o">=</span> <span class="n">Application</span><span class="p">(</span><span class="n">db_factory</span><span class="p">,</span> <span class="n">cache_factory</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="singleton-configuration">Singleton Configuration</h2>
 <p>A cached singleton is returned as it is, and the <code>configuration</code> given to a later call
 is discarded — the instance cannot be rebuilt without breaking the identity other
 holders depend on. Since that used to happen silently, a configuration differing from
 the one the instance was built with now warns:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"primary"</span><span class="p">})</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"replica"</span><span class="p">})</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="c1"># SweetTeaWarning: Ignoring the configuration passed for singleton 'pg': an instance</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="c1"># is already cached and is not rebuilt, so the configuration from the first call</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="c1"># still applies.</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"primary"</span><span class="p">})</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pg"</span><span class="p">,</span> <span class="n">configuration</span><span class="o">=</span><span class="p">{</span><span class="s2">"host"</span><span class="p">:</span> <span class="s2">"replica"</span><span class="p">})</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="c1"># SweetTeaWarning: Ignoring the configuration passed for singleton 'pg': an instance</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># is already cached and is not rebuilt, so the configuration from the first call</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1"># still applies.</span>
 </span></code></pre></div>
 <h3 id="what-counts-as-a-different-configuration">What counts as a different configuration</h3>
 <p>Drift is judged on the keyword arguments construction would use, not on what the caller
@@ -1701,22 +1714,31 @@ looks for cycles among import locks, nothing reports it.</p>
   constructor invocation per key, with never more than one constructor for a key
   running at a time. That holds across a concurrent <code>clear()</code>, which is why <code>clear()</code>
   keeps the per-key construction locks it used to discard.</li>
+<li><strong>A reset beats a construction that was already running.</strong> <code>clear()</code> and <code>pop()</code>
+  cannot cancel a constructor — nothing can — so a construction that began before one
+  of them finishes, hands its instance back to the caller that asked for it, and
+  caches nothing, with a <code>SweetTeaWarning</code> saying so. Otherwise <code>list_singletons()</code>
+  went <code>[]</code> and then back to <code>['cache']</code> with no <code>create()</code> in between, holding an
+  instance built against the registry as it was before the reset. The caller still
+  gets a usable object; it is simply not the shared one, and the next <code>create()</code> for
+  that key builds a new instance. Reset the factory before the constructions that
+  depend on it, not during them.</li>
 </ul>
 <p>A constructor that resolves another registered class, or a module body that creates a
 singleton, is therefore safe. Neither was before.</p>
 <h3 id="circular-singleton-dependencies">Circular singleton dependencies</h3>
 <p>A constructor may resolve or create, so it may also ask for a singleton whose
 construction it is already inside — directly, or round a chain of collaborators:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Alpha</span><span class="p">:</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">=</span> <span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"beta"</span><span class="p">)</span>    <span class="c1"># whose __init__ creates "alpha"</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Alpha</span><span class="p">:</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">beta</span> <span class="o">=</span> <span class="n">SingletonFactory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"beta"</span><span class="p">)</span>    <span class="c1"># whose __init__ creates "alpha"</span>
 </span></code></pre></div>
 <p>That instance cannot exist until the constructor asking for it returns, so there is
 nothing to wait for. <code>SingletonFactory</code> raises instead, naming the path round the
 cycle:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>SweetTeaError: Circular singleton construction for key 'alpha': alpha -&gt; beta -&gt;
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>alpha. A constructor asked SingletonFactory for a singleton whose construction it is
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>already inside ...
+<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>SweetTeaError: Circular singleton construction for key 'alpha': alpha -&gt; beta -&gt;
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>alpha. A constructor asked SingletonFactory for a singleton whose construction it is
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>already inside ...
 </span></code></pre></div>
 <p>Circular dependencies are a mistake in the calling code; reporting them is the
 container's job. Break the cycle by taking the collaborator as a constructor argument,
@@ -1735,9 +1757,9 @@ out of constructors that resolve.</p>
 <p><code>fill_registry</code> imports every module in the tree to find the classes in it. With
 <code>lazy=True</code> it reads the names out of the source instead, and imports a module only
 when a factory first needs a class from it:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>   <span class="c1"># imports just that module</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>   <span class="c1"># imports just that module</span>
 </span></code></pre></div>
 <p>Measured on a 880-module package: filling drops from 1,165 ms, 46 MB and 1,600 imported
 modules to 552 ms, 4.3 MB and none. The saving is whatever you never ask for — and it
@@ -1753,11 +1775,11 @@ aliases, <code>type()</code> calls, <code>namedtuple</code>, <code>Enum</code> a
 by reading the source. Classes injected at runtime — <code>globals()[name] = type(...)</code>,
 <code>setattr(module, ...)</code> — leave no trace to read. Asking for one of those triggers a
 fallback sweep that imports everything still pending and warns:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>SweetTeaWarning: Importing 43 remaining module(s) to look for loopa: no lazily
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>registered name matched. Add the defining module to fill_registry(eager=[...]).
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>SweetTeaWarning: Importing 43 remaining module(s) to look for loopa: no lazily
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>registered name matched. Add the defining module to fill_registry(eager=[...]).
 </span></code></pre></div>
 <p>Name those modules up front and the sweep never happens:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eager</span><span class="o">=</span><span class="p">[</span><span class="s2">"myapp.plugins.*"</span><span class="p">])</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eager</span><span class="o">=</span><span class="p">[</span><span class="s2">"myapp.plugins.*"</span><span class="p">])</span>
 </span></code></pre></div>
 <p><code>eager</code> patterns match the same way <code>exclude</code> patterns do, and <code>exclude</code> still wins.
 Passing <code>eager</code> without <code>lazy</code> is an error rather than a no-op.</p>
@@ -1789,15 +1811,15 @@ is by definition eager.</p>
 <p><code>Registry.register_lazy(key, module, attribute, library="", label="")</code> adds a single
 deferred entry, without a scan or a tree walk. Use it to register a class you already
 know the location of — most usefully under a key of your own:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">register_lazy</span><span class="p">(</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>    <span class="n">key</span><span class="o">=</span><span class="s2">"pattern_alias"</span><span class="p">,</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>    <span class="n">module</span><span class="o">=</span><span class="s2">"myapp.patterns.retry"</span><span class="p">,</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>    <span class="n">attribute</span><span class="o">=</span><span class="s2">"RetryPattern"</span><span class="p">,</span>
-</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>    <span class="n">library</span><span class="o">=</span><span class="s2">"mylib"</span><span class="p">,</span>
-</span><span id="__span-16-6"><a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>    <span class="n">label</span><span class="o">=</span><span class="s2">"alias"</span><span class="p">,</span>
-</span><span id="__span-16-7"><a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="p">)</span>
-</span><span id="__span-16-8"><a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>
-</span><span id="__span-16-9"><a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pattern_alias"</span><span class="p">)</span>     <span class="c1"># imports myapp.patterns.retry, and nothing else</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">register_lazy</span><span class="p">(</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>    <span class="n">key</span><span class="o">=</span><span class="s2">"pattern_alias"</span><span class="p">,</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="n">module</span><span class="o">=</span><span class="s2">"myapp.patterns.retry"</span><span class="p">,</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>    <span class="n">attribute</span><span class="o">=</span><span class="s2">"RetryPattern"</span><span class="p">,</span>
+</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="n">library</span><span class="o">=</span><span class="s2">"mylib"</span><span class="p">,</span>
+</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>    <span class="n">label</span><span class="o">=</span><span class="s2">"alias"</span><span class="p">,</span>
+</span><span id="__span-17-7"><a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="p">)</span>
+</span><span id="__span-17-8"><a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>
+</span><span id="__span-17-9"><a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"pattern_alias"</span><span class="p">)</span>     <span class="c1"># imports myapp.patterns.retry, and nothing else</span>
 </span></code></pre></div>
 <p>The key, library and label are kept exactly as given. Resolving the module registers
 everything discovery finds in it as well, so an alias and the class's own discovered key
@@ -1808,12 +1830,12 @@ name is held to.</p>
 <p><code>Registry.entries()</code> returns unresolved entries too, and reading <code>entry.class_def</code> on
 one imports its module and hands back the class — so code that introspects the registry
 keeps working:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># resolves only the entries this filter actually selected</span>
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>    <span class="n">entry</span><span class="o">.</span><span class="n">class_def</span>
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span>
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">entry</span><span class="o">.</span><span class="n">library</span> <span class="o">==</span> <span class="s2">"mylib"</span>
-</span><span id="__span-17-6"><a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="p">]</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># resolves only the entries this filter actually selected</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>    <span class="n">entry</span><span class="o">.</span><span class="n">class_def</span>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">Registry</span><span class="o">.</span><span class="n">entries</span><span class="p">()</span>
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">name</span> <span class="ow">and</span> <span class="n">entry</span><span class="o">.</span><span class="n">library</span> <span class="o">==</span> <span class="s2">"mylib"</span>
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="p">]</span>
 </span></code></pre></div>
 <p>Because the filter runs first, only the matching entries' modules are imported. A loop
 that touches <code>class_def</code> on <em>every</em> entry is effectively an eager fill.</p>
@@ -1846,11 +1868,11 @@ defer their lookups to first use.</p>
 <p>Filling a registry walks a package tree. Lazy filling skips the imports but still reads
 every source file. A snapshot skips both — write the filled registry once, read it back
 as data:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>      <span class="c1"># build step</span>
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>        <span class="c1"># every run after</span>
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">Registry</span><span class="o">.</span><span class="n">fill_registry</span><span class="p">(</span><span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="n">Registry</span><span class="o">.</span><span class="n">export</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>      <span class="c1"># build step</span>
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="n">Registry</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"registry.json"</span><span class="p">)</span>        <span class="c1"># every run after</span>
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="n">Factory</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="s2">"database_connection"</span><span class="p">)</span>
 </span></code></pre></div>
 <p>Measured on an 880-module package, all producing the same 799 entries:</p>
 <table>
@@ -1882,6 +1904,21 @@ a temporary file beside the destination and renamed over it, which is atomic. So
 process loading the snapshot at the moment a build writes it reads either the old file
 or the new one, never half of one, and that holds across processes, where no lock would
 have.</p>
+<p>Two consequences of writing it that way are worth knowing:</p>
+<ul>
+<li><strong>A destination that is a symlink is followed.</strong> The link's <em>target</em> is replaced and
+  the link survives, so a deliberate <code>snapshot.json -&gt; /var/cache/myapp/snapshot.json</code>
+  indirection keeps working. A chain of links resolves to its end, and a link pointing
+  at a file that does not exist yet has that file created. The temporary file goes
+  beside the resolved target, not beside the link, because the rename has to stay on
+  one file system to be atomic.</li>
+<li><strong>The directory holding the destination must be writable</strong>, not just the destination
+  file — that is where the temporary file is created. A writable <code>snapshot.json</code> inside
+  a directory you cannot write is refused with a <code>SweetTeaError</code> naming the directory.
+  Falling back to a non-atomic in-place write was rejected: it would bring back the
+  truncated reads this exists to prevent, in exactly the environment nobody tests, and
+  make the guarantee conditional on something no caller can see from the API.</li>
+</ul>
 <h3 id="staleness">Staleness</h3>
 <p>A stale snapshot is worse than walking the tree: it registers names that no longer
 exist, and the failure surfaces far from the cause. So a snapshot records the trees it
@@ -1934,15 +1971,15 @@ snapshot is read, rather than resolved: it decides which directory gets verified
 hand-edited one must not be able to aim that anywhere it likes. <code>version</code> has to be a
 positive integer no greater than this reader's format.</p>
 <h3 id="what-a-snapshot-records">What a snapshot records</h3>
-<div class="language-json highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="p">{</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"relative_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"."</span><span class="p">,</span>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">               </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w"> </span><span class="nt">"provisional"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}],</span>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span>
-</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="w">                </span><span class="s2">"missing optional dependency: ModuleNotFoundError: No module named 'redis'"</span><span class="p">}</span>
-</span><span id="__span-19-9"><a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="p">}</span>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="p">{</span>
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"relative_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"."</span><span class="p">,</span>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a><span class="w">               </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a><span class="w">               </span><span class="nt">"library"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">""</span><span class="p">,</span><span class="w"> </span><span class="nt">"provisional"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">}],</span>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a><span class="w">  </span><span class="nt">"skipped"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"myapp.optional_backend"</span><span class="p">:</span>
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a><span class="w">                </span><span class="s2">"missing optional dependency: ModuleNotFoundError: No module named 'redis'"</span><span class="p">}</span>
+</span><span id="__span-20-9"><a id="__codelineno-20-9" name="__codelineno-20-9" href="#__codelineno-20-9"></a><span class="p">}</span>
 </span></code></pre></div>
 <p><code>class_def</code> is <code>module:attribute</code> — the attribute the class is <em>bound to</em>, which is how
 the registry keys it and is not always the class's own <code>__name__</code>.</p>
