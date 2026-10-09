@@ -116,6 +116,9 @@ class SingletonFactory(BaseFactory):
     # ``__configuration__`` will not accept. Not a basis, and not undecidable either: a
     # configuration that fails validation cannot be the one the cached instance was
     # built from, since that one validated. It drifted (see SWE-29).
+    #
+    # Only ever reached on a cache hit. A constructing call never gets this far with a
+    # configuration the schema refuses: it raises on it, which is the stronger report.
     __REJECTED_BY_SCHEMA = object()
 
     # Logger instance
@@ -191,12 +194,35 @@ class SingletonFactory(BaseFactory):
                 cls.__warn_on_configuration_drift(cache_key, entry, configuration)
                 return cached_instance
 
+            # Any declared __configuration__ is applied once, here, and construction is
+            # handed the result. Both want it: construction builds from the validated
+            # model, and the basis has to be of what construction would use rather than
+            # of what the caller typed (SWE-29). Computing the basis by validating a
+            # second time ran the consumer's validators twice for every singleton built,
+            # and a validator is consumer code — it may be slow, and it may count
+            # (SWE-42). There is nothing to repeat, because _validate_configuration
+            # takes an instance of the declared model as already valid, so passing the
+            # applied configuration on costs construction nothing.
+            #
+            # Whatever the schema raises is left to propagate. It would have come out of
+            # _construct a moment later on the same configuration, so this hands the
+            # caller nothing they were not already going to see — and the alternative,
+            # swallowing it, would cache an instance built from a configuration the
+            # class refused.
+            #
+            # The class is read through _class_of, which is what construction reads and
+            # which resolves a lazy entry by importing. That is allowed here and nowhere
+            # else in this comparison: no factory lock is held on this path, and
+            # _construct is about to import the same module anyway. The cache-hit path
+            # has no such licence — see __comparable.
+            applied = cls.__applied(entry, cls._class_of(entry), configuration)
+
             # Recorded before the constructor runs, deliberately. A constructor is
             # entitled to mutate what it was handed — appending to a list it was given
             # is ordinary — and a basis captured afterwards would hold the constructor's
             # own edit. The next caller passing the configuration they actually passed
             # would then be blamed for a difference the first call introduced (SWE-29).
-            comparison_basis = cls.__snapshot(cls.__comparable(entry, configuration))
+            comparison_basis = cls.__snapshot(cls.__reduced(applied))
 
             # No factory lock held here, by design: a constructor runs arbitrary code
             # and may itself resolve or create. The construction lock still admits
@@ -205,7 +231,7 @@ class SingletonFactory(BaseFactory):
             # injection and proceeds; one that comes back for this key is a cycle, and
             # the admission above has it on this thread's stack so the nested call
             # raises instead of blocking on the lock this thread holds (SWE-36).
-            new_instance = cls._construct(entry, configuration)
+            new_instance = cls._construct(entry, applied)
 
             with cls.__lock:
                 cls.__instances[cache_key] = new_instance
@@ -451,11 +477,54 @@ class SingletonFactory(BaseFactory):
         return f"{key}[{library}:{label}]"
 
     @classmethod
-    def __comparable(
-        cls, entry: Entry, configuration: dict[str, Any] | BaseModel | None
-    ) -> Any:
+    def __applied(
+        cls,
+        entry: Entry,
+        class_def: Any,
+        configuration: dict[str, Any] | BaseModel | None,
+    ) -> dict[str, Any] | BaseModel | None:
         """
-        Reduce a configuration to the keyword arguments construction would use.
+        Apply a class's declared ``__configuration__``, when it declares one.
+
+        Done through the same helper construction uses, so that one application serves
+        both: construction builds from the model, and the comparison basis is of the
+        model rather than of the dict the caller happened to type (see SWE-29).
+
+        Applied once per call to :meth:`create`, which is what it takes to keep a
+        validator from running twice for every singleton built (see SWE-42).
+
+        Nothing is caught. Which failures are survivable is the caller's question, not
+        this one's, and the two callers answer it differently: on the constructing path
+        a schema that refuses the configuration is a create that must fail, while on the
+        cache-hit path no instance is being built and there is nothing to fail at.
+
+        Args:
+            entry: The resolved registry entry, used for error messages.
+            class_def: The class whose declaration to read. Passed in rather than taken
+                from the entry because the two callers may not read it the same way —
+                see :meth:`__comparable` on why a warning must not resolve a lazy entry.
+            configuration: The configuration as given.
+
+        Returns:
+            The validated model when a schema is declared, and the configuration
+            unchanged when none is.
+
+        Raises:
+            SweetTeaError: When the declaration is not a BaseModel subclass, or when it
+                rejects the configuration.
+            Exception: Whatever a validator raises on its own account.
+        """
+        schema = getattr(class_def, "__configuration__", None)
+        if schema is None:
+            return configuration
+        return cls._validate_configuration(entry, schema, configuration)
+
+    @classmethod
+    def __reduced(
+        cls, configuration: dict[str, Any] | BaseModel | None
+    ) -> dict[str, Any] | None:
+        """
+        Reduce a schema-applied configuration to the keyword arguments it spreads.
 
         Drift is judged on what the class would actually be built with rather than on
         what the caller typed, because that is the question the warning answers: would
@@ -465,51 +534,20 @@ class SingletonFactory(BaseFactory):
         omitted and the same field spelled out as the schema's own default — and all of
         them have to compare equal (see SWE-29).
 
-        The declared schema is applied through the same helper construction uses, and
-        the reduction that follows mirrors :meth:`BaseFactory._construct` step for step;
-        if that reduction ever changes, this must change with it. Note that a schema is
-        therefore validated again on a cache hit, where construction no longer happens:
-        pydantic validation is expected to be pure, and the alternative — comparing
-        pre-schema — is the bug being fixed.
-
-        Nothing here imports, and nothing here resolves a lazy entry: the cache-hit
-        path runs under the factory's lock, where SWE-22 showed what an import costs.
-        A still-lazy entry leaves drift undecidable, as does a configuration that will
-        not reduce at all.
+        This mirrors the tail of :meth:`BaseFactory._construct` step for step; if that
+        reduction ever changes, this must change with it.
 
         Args:
-            entry: The resolved registry entry the instance was, or will be, built from.
-            configuration: The configuration as given.
+            configuration: The configuration with any declared schema already applied,
+                as :meth:`__applied` returns it.
 
         Returns:
-            The keyword arguments construction would spread; ``__REJECTED_BY_SCHEMA``
-            when a declared model refuses the configuration; None when the reduction
+            The keyword arguments construction would spread, or None when the reduction
             cannot be made at all, which leaves drift undecidable.
         """
-        class_def = entry.class_object
-        if class_def is None:
-            # The stored field, never ``entry.class_def``: that property resolves a lazy
-            # entry by importing its module, and this runs on the cache-hit path with
-            # the factory's lock held, where an import is the lock inversion SWE-22
-            # exists to prevent. Resolution is for construction; a warning has less
-            # standing than that and gives up instead. In practice the entry arrives
-            # resolved, since looking it up is what resolved it.
-            return None
-
-        schema = getattr(class_def, "__configuration__", None)
-        if schema is not None:
-            try:
-                configuration = cls._validate_configuration(
-                    entry, schema, configuration
-                )
-            except SweetTeaError:
-                return cls.__REJECTED_BY_SCHEMA
-
         try:
             if configuration is None:
                 return {}
-            if isinstance(configuration, BaseModel):
-                return dict(configuration)
             return dict(configuration)
         except Exception:
             # A mapping that will not convert, a model whose iteration fails. This runs
@@ -518,7 +556,66 @@ class SingletonFactory(BaseFactory):
             return None
 
     @classmethod
-    def __snapshot(cls, kwargs: Any) -> dict[str, Any] | None:
+    def __comparable(
+        cls, entry: Entry, configuration: dict[str, Any] | BaseModel | None
+    ) -> Any:
+        """
+        Compute a comparison basis on the cache-hit path, where nothing may go wrong.
+
+        Nothing is being constructed here. The caller has its instance already and is
+        owed it whatever this makes of the configuration, so every way of failing to
+        reach a basis has to end in a return rather than a raise. Two of them end
+        differently, and the distinction is the point of this method:
+
+        - **The schema refuses the configuration.** Decidable, and decided: the cached
+          instance's configuration validated, so one that does not validate cannot be
+          the same request. That is drift, and it is reported (``__REJECTED_BY_SCHEMA``).
+        - **The schema cannot be applied at all** — a validator raising ``AttributeError``
+          on a value of the wrong type, a ``KeyError``, anything that is not pydantic
+          saying no. Then there is no basis to compare and no verdict to give, so this
+          falls silent, exactly as a value whose ``==`` is not boolean does. Previously
+          such an exception escaped :meth:`create` on a call that only wanted the cached
+          instance, which is the one thing a warning path must never do (SWE-42).
+
+        Telling the two apart by exception type is the honest reading of each: a
+        ``ValidationError``, which :meth:`BaseFactory._validate_configuration` has
+        already wrapped as a :class:`SweetTeaError`, is the schema's own considered no.
+        Anything else is a validator that broke, and a broken validator is evidence
+        about the validator and none at all about the configuration.
+
+        Nothing here imports, and nothing here resolves a lazy entry: the cache-hit
+        path runs where SWE-22 showed what an import under a lock costs. A still-lazy
+        entry leaves drift undecidable.
+
+        Args:
+            entry: The resolved registry entry the cached instance was built from.
+            configuration: The configuration as given.
+
+        Returns:
+            The keyword arguments construction would spread; ``__REJECTED_BY_SCHEMA``
+            when a declared model refuses the configuration; None when no basis can be
+            computed, which leaves drift undecidable.
+        """
+        class_def = entry.class_object
+        if class_def is None:
+            # The stored field, never ``entry.class_def``: that property resolves a lazy
+            # entry by importing its module, and an import on this path is the lock
+            # inversion SWE-22 exists to prevent. Resolution is for construction; a
+            # warning has less standing than that and gives up instead. In practice the
+            # entry arrives resolved, since looking it up is what resolved it.
+            return None
+
+        try:
+            applied = cls.__applied(entry, class_def, configuration)
+        except SweetTeaError:
+            return cls.__REJECTED_BY_SCHEMA
+        except Exception:
+            return None
+
+        return cls.__reduced(applied)
+
+    @classmethod
+    def __snapshot(cls, kwargs: dict[str, Any] | None) -> dict[str, Any] | None:
         """
         Copy a comparison basis away from the caller's own objects.
 
@@ -539,18 +636,17 @@ class SingletonFactory(BaseFactory):
         two values of one configuration, which equality does not look at.
 
         Args:
-            kwargs: The keyword arguments to record, or anything :meth:`__comparable`
-                returns in place of them when it could not reduce the configuration.
+            kwargs: The keyword arguments to record, as :meth:`__reduced` computed them,
+                or None when the configuration would not reduce at all.
 
         Returns:
             A snapshot safe to keep, or None when there were no keyword arguments to
             record — which records drift against this instance as undecidable.
         """
-        if not isinstance(kwargs, dict):
-            # None, or a configuration the declared schema rejected. Either way there
-            # is nothing a later call can be compared against. A rejected one does
-            # arrive here on a first call, and what it records is moot: construction
-            # raises on the same configuration a few lines later.
+        if kwargs is None:
+            # The configuration would not reduce, so there is nothing a later call can
+            # be compared against. Recording None is what makes drift against this
+            # instance undecidable for good rather than guessed at.
             return None
 
         snapshot: dict[str, Any] = {}
