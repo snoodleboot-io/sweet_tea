@@ -126,23 +126,64 @@ class RegistrySnapshot(BaseModel):
         fsynced, so a crash can still lose this write. What a reader must never see is
         a file that is neither the old snapshot nor the new one.
 
+        The destination is resolved through symlinks before any of that happens, and
+        the replacement lands on what it resolves to (SWE-45). A snapshot path is
+        commonly an indirection somebody chose — ``snapshot.json ->
+        /var/cache/myapp/snapshot.json`` — and :func:`os.replace` onto the link itself
+        replaces the *link* with a regular file. Nothing fails and nothing warns; the
+        indirection is simply gone, and every reader that went through it afterwards
+        gets a file nobody is updating any more. Resolving first also keeps the
+        temporary file on the same file system as the file actually being replaced,
+        which is what the atomicity depends on: beside the link is the wrong directory
+        when the link crosses a mount. A chain of links resolves to its end, so every
+        hop survives; a link pointing at nothing resolves to the target it names and
+        the write creates it, which is what writing to a dangling link has always done
+        and leaves the link whole rather than consuming it.
+
+        That resolution is of the *destination*, not of the snapshot's contents: what
+        gets recorded about the trees that were filled is unaffected.
+
+        The directory holding the resolved destination has to be writable, and that is
+        a real requirement rather than an incidental one: the temporary file is created
+        there. A writable ``snapshot.json`` inside a directory this process cannot
+        write is therefore refused, where the old in-place write would have succeeded.
+        That trade is deliberate. The alternative — falling back to truncating the
+        destination in place — would reintroduce SWE-26 exactly where it is hardest to
+        see, in the rare environment nobody tests, and would make the one guarantee
+        this method exists to give conditional on a file system property no caller can
+        read off the API. A guarantee that holds unless it quietly does not is worth
+        less than a refusal that names the directory, which is what this raises.
+
         Args:
-            path: Destination file.
+            path: Destination file. A symlink is followed and its target replaced,
+                rather than the link.
 
         Raises:
-            SweetTeaError: When the file cannot be written.
+            SweetTeaError: When the file cannot be written — including when the
+                directory holding it will not take the temporary file, which is
+                reported against the directory rather than against the file.
         """
-        destination = os.path.abspath(path)
+        # Resolved rather than merely absolute: a destination that is a symlink must
+        # have its target rewritten, and the temporary file has to sit beside that
+        # target to be renameable onto it (SWE-45).
+        destination = os.path.realpath(path)
+        directory = os.path.dirname(destination)
         try:
             # The same directory, so that the move is a rename rather than a copy —
             # across file systems os.replace is neither atomic nor even possible.
             descriptor, temporary = tempfile.mkstemp(
-                dir=os.path.dirname(destination),
+                dir=directory,
                 prefix=f".{os.path.basename(destination)}.",
                 suffix=".tmp",
             )
         except OSError as error:
-            raise SweetTeaError(f"Cannot write snapshot to {path}: {error}") from error
+            # Reported against the directory, because that is what is wrong. "Permission
+            # denied: /ro/.snapshot.json.ab12cd.tmp" names a file the caller never asked
+            # for and cannot find afterwards, and reads as a bug in sweet_tea rather
+            # than as a directory they cannot write (SWE-45).
+            raise SweetTeaError(
+                self.__unusable_directory(path, destination, directory, error)
+            ) from error
 
         try:
             with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
@@ -158,6 +199,53 @@ class RegistrySnapshot(BaseModel):
             # or an interrupt — and none of them may leave a temp file behind.
             self.__discard(temporary)
             raise
+
+    @staticmethod
+    def __unusable_directory(
+        path: str, destination: str, directory: str, error: OSError
+    ) -> str:
+        """
+        Say why a temporary file could not be created, against the directory.
+
+        The failure a caller actually meets here is a destination file they can write
+        inside a directory they cannot, and the errno alone sends them to look at the
+        file. The message therefore names the directory, says why the write needs it,
+        and names the resolution when the path they gave was a link — otherwise the
+        directory in the message belongs to a path they never typed.
+
+        The cause is re-derived rather than read off the errno: EACCES, EROFS, ENOENT
+        and ENOTDIR all arrive here and all mean something a caller can act on, but
+        only after being translated out of a number.
+
+        Args:
+            path: Destination exactly as the caller gave it.
+            destination: What that resolves to.
+            directory: The directory the temporary file would have gone in.
+            error: What :func:`tempfile.mkstemp` raised.
+
+        Returns:
+            The message for the SweetTeaError.
+        """
+        if not os.path.isdir(directory):
+            cause = f"the directory {directory} does not exist"
+        elif not os.access(directory, os.W_OK | os.X_OK):
+            cause = f"the directory {directory} is not writable"
+        else:
+            cause = f"the directory {directory} would not take a temporary file"
+
+        resolution = (
+            f" {path} resolves to {destination}."
+            if destination != os.path.abspath(path)
+            else ""
+        )
+        return (
+            f"Cannot write snapshot to {path}: {cause} ({error}).{resolution} The "
+            f"snapshot is built in a temporary file in that directory and renamed over "
+            f"the destination, which is what stops a concurrent read from seeing a "
+            f"half-written document (SWE-26), so a writable destination file is not "
+            f"enough on its own. Export somewhere this process can create a file, or "
+            f"make the directory writable."
+        )
 
     @staticmethod
     def __destination_mode(path: str) -> int:
