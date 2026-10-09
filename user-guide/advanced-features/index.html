@@ -1590,6 +1590,14 @@ because <code>eager="auto"</code> audits every module before it fills anything.<
 <li>Typed entries maintain separate caches per type</li>
 <li>Thread-safe operations use efficient RLock</li>
 </ul>
+<p><code>Registry.typed_entries</code> accepts whatever <code>issubclass</code> accepts as its second argument —
+a class, a tuple of classes, a union, a runtime-checkable Protocol — and anything else
+is refused with <code>issubclass</code>'s own <code>TypeError</code> rather than memoised and answered with
+<code>[]</code>. Each accepted lookup gets a cache slot, and <code>register</code> refreshes every slot a new
+class belongs in. The two used to disagree: a tuple built a slot that the refresh then
+skipped, because the refresh only considered keys that were themselves classes, so a
+tuple lookup answered its first question forever (SWE-43). Whatever is accepted is
+cached, and whatever is cached is refreshed.</p>
 <h2 id="integration-patterns">Integration Patterns</h2>
 <h3 id="dependency-injection">Dependency Injection</h3>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">Application</span><span class="p">:</span>
