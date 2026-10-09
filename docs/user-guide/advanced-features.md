@@ -576,9 +576,9 @@ have.
 
 A stale snapshot is worse than walking the tree: it registers names that no longer
 exist, and the failure surfaces far from the cause. So a snapshot records the trees it
-was built from with a digest over their Python sources, and `load` checks it by default.
-A changed, added or removed module, or a tree that is gone, raises `SweetTeaError`
-naming the source and telling you to rebuild.
+was built from with a digest over every file in them a module could be imported from,
+and `load` checks it by default. A changed, added or removed module, or a tree that is
+gone, raises `SweetTeaError` naming the source and telling you to rebuild.
 
 A tree that merely *moved* does not. Each source is recorded by where it sits inside its
 root package as well as by the absolute directory the export walked, and verification
@@ -597,14 +597,28 @@ directory is there: with portions `p1/ns` and `p2/ns` both importable, a snapsho
 it is still there, and the recorded absolute directory is the last resort, so an
 uninstalled tree is still checked exactly where it was built.
 
-Verification costs a hash of every source file — 41 ms of the 49 ms above. Pass
+Verification costs a hash of every covered file — 41 ms of the 49 ms above. Pass
 `verify=False` where something else already guarantees the snapshot is current, such as
 a build that regenerates it.
 
+What counts as covered is asked of `importlib.machinery` rather than assumed to be
+`.py`, because filling imports whatever the machinery will import. A module shipped as
+bytecode only — a `foo.pyc` with no `foo.py` beside it — and a `.so` or `.pyd` extension
+module are both registered from, so both are hashed; before, deleting the only file
+behind a name left verification passing, and rebuilding an extension with different
+classes in it was invisible. Extension modules are hashed in full rather than measured
+by size and mtime: mtime does not survive installation, so a snapshot built in CI would
+call every consumer's extension stale, and size alone misses a rebuild that lands on the
+same length.
+
+`__pycache__` is ignored, and so is a `foo.pyc` sitting beside its own `foo.py`: bytecode
+compiled from a source file in the tree is derived, and hashing it would move the digest
+on every recompile and every interpreter version without saying anything the source does
+not. Only bytecode that is the whole of its module counts.
+
 The digest covers excluded modules too. A snapshot cannot know which `exclude` patterns
 a later fill would pass, so it is deliberately conservative: editing a file that was
-never registered still marks the snapshot stale. `__pycache__` is ignored, since
-bytecode is derived.
+never registered still marks the snapshot stale.
 
 Symlinked directories are followed, because filling follows them: a subpackage that is a
 link into a shared directory or another checkout is walked and registered, so the digest
@@ -623,7 +637,7 @@ positive integer no greater than this reader's format.
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "sources": [{"module": "myapp", "path": "/srv/myapp", "relative_path": ".",
                "digest": "..."}],
   "entries": [{"key": "database_connection", "class_def": "myapp.db:DatabaseConnection",
@@ -649,14 +663,22 @@ directory relative to its root package's own directory — `"."` when the filled
 *is* the root, `"sub"` when `myapp.sub` was filled. Verification prefers the relative
 one, which is why a shipped snapshot still works.
 
-`version` is 4. Format 2 added `relative_path`; format 3 changed how a digest is
+`version` is 5. Format 2 added `relative_path`; format 3 changed how a digest is
 computed — the records inside it are framed, and symlinked subpackages are followed — so
 the same unchanged tree hashes to a different value than it did before; format 4 added
-`provisional`. Each is a reason to move the version rather than change behaviour quietly:
-a sweet_tea that predates any of them refuses a newer file outright and says so, instead
-of ignoring what it does not know and reaching the wrong verdict. An older snapshot still
-parses here, but its digest was computed under the older rules, so verification will call
+`provisional`; format 5 widened the digest to every importable file rather than sources
+alone. Each is a reason to move the version rather than change behaviour quietly: a
+sweet_tea that predates any of them refuses a newer file outright and says so, instead of
+ignoring what it does not know and reaching the wrong verdict. An older snapshot still
+parses here, but its digest was computed under the older rules, so verification may call
 it stale; the answer either way is the one the error gives — re-export it.
+
+Format 5 is narrower than format 3 in what it disturbs. A tree of nothing but sources
+hashes exactly as it did, which is almost every tree, so almost no existing snapshot
+re-verifies as stale. What moves is the digest of a tree holding a compiled or sourceless
+module — and those were the digests that were wrong: before this, a tree holding a
+sourceless module and an otherwise identical tree without it hashed *identically*, so
+verification could not tell them apart at all.
 
 A format 3 or earlier snapshot read here records no provenance, so every name in it is
 read as a guess and `load` warns. That is the safe direction — a guess read as a request

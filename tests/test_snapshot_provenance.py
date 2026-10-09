@@ -174,8 +174,11 @@ class TestWhatTheFileRecords(ProvenanceCase):
         self.fill(lazy=True)
         Registry.export(self.path)
 
-        self.assertEqual(self.written()["version"], 4)
-        self.assertEqual(RegistrySnapshot.FORMAT_VERSION, 4)
+        # 4 is where provisional arrived; the format has moved on since for unrelated
+        # reasons, so what matters is that this file is at or past that point.
+        self.assertGreaterEqual(self.written()["version"], 4)
+        self.assertEqual(self.written()["version"], RegistrySnapshot.FORMAT_VERSION)
+        self.assertIn("provisional", self.written()["entries"][0])
 
 
 class TestAnAliasSurvivesTheRoundTrip(ProvenanceCase):
@@ -387,16 +390,19 @@ class TestAFormatThreeSnapshot(ProvenanceCase):
 class TestANewerFormatIsStillRefused(ProvenanceCase):
     """The bump must not have cost the forward-compatibility check."""
 
-    def test_version_five_is_refused(self):
+    def test_a_version_past_this_reader_is_refused(self):
         """A file this reader cannot understand is refused, not read optimistically."""
         self.fill(lazy=True)
         Registry.export(self.path)
         payload = self.written()
-        payload["version"] = 5
+        # Expressed against the current format so this keeps testing the rule rather
+        # than a literal that has to be edited on every bump.
+        ahead = RegistrySnapshot.FORMAT_VERSION + 1
+        payload["version"] = ahead
         with open(self.path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
 
         with self.assertRaises(SweetTeaError) as caught:
             RegistrySnapshot.read(self.path)
 
-        self.assertIn("version 5", str(caught.exception))
+        self.assertIn(f"version {ahead}", str(caught.exception))
