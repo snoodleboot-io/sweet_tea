@@ -1885,9 +1885,9 @@ have.</p>
 <h3 id="staleness">Staleness</h3>
 <p>A stale snapshot is worse than walking the tree: it registers names that no longer
 exist, and the failure surfaces far from the cause. So a snapshot records the trees it
-was built from with a digest over their Python sources, and <code>load</code> checks it by default.
-A changed, added or removed module, or a tree that is gone, raises <code>SweetTeaError</code>
-naming the source and telling you to rebuild.</p>
+was built from with a digest over every file in them a module could be imported from,
+and <code>load</code> checks it by default. A changed, added or removed module, or a tree that is
+gone, raises <code>SweetTeaError</code> naming the source and telling you to rebuild.</p>
 <p>A tree that merely <em>moved</em> does not. Each source is recorded by where it sits inside its
 root package as well as by the absolute directory the export walked, and verification
 looks for it where that package is installed now. That is what makes the obvious build
@@ -1903,13 +1903,25 @@ directory is there: with portions <code>p1/ns</code> and <code>p2/ns</code> both
 <code>p2/ns</code> is checked against <code>p2/ns</code>. The directory the export walked is tried first where
 it is still there, and the recorded absolute directory is the last resort, so an
 uninstalled tree is still checked exactly where it was built.</p>
-<p>Verification costs a hash of every source file — 41 ms of the 49 ms above. Pass
+<p>Verification costs a hash of every covered file — 41 ms of the 49 ms above. Pass
 <code>verify=False</code> where something else already guarantees the snapshot is current, such as
 a build that regenerates it.</p>
+<p>What counts as covered is asked of <code>importlib.machinery</code> rather than assumed to be
+<code>.py</code>, because filling imports whatever the machinery will import. A module shipped as
+bytecode only — a <code>foo.pyc</code> with no <code>foo.py</code> beside it — and a <code>.so</code> or <code>.pyd</code> extension
+module are both registered from, so both are hashed; before, deleting the only file
+behind a name left verification passing, and rebuilding an extension with different
+classes in it was invisible. Extension modules are hashed in full rather than measured
+by size and mtime: mtime does not survive installation, so a snapshot built in CI would
+call every consumer's extension stale, and size alone misses a rebuild that lands on the
+same length.</p>
+<p><code>__pycache__</code> is ignored, and so is a <code>foo.pyc</code> sitting beside its own <code>foo.py</code>: bytecode
+compiled from a source file in the tree is derived, and hashing it would move the digest
+on every recompile and every interpreter version without saying anything the source does
+not. Only bytecode that is the whole of its module counts.</p>
 <p>The digest covers excluded modules too. A snapshot cannot know which <code>exclude</code> patterns
 a later fill would pass, so it is deliberately conservative: editing a file that was
-never registered still marks the snapshot stale. <code>__pycache__</code> is ignored, since
-bytecode is derived.</p>
+never registered still marks the snapshot stale.</p>
 <p>Symlinked directories are followed, because filling follows them: a subpackage that is a
 link into a shared directory or another checkout is walked and registered, so the digest
 has to cover it or verification would pass over renamed and added classes. A directory
@@ -1923,7 +1935,7 @@ hand-edited one must not be able to aim that anywhere it likes. <code>version</c
 positive integer no greater than this reader's format.</p>
 <h3 id="what-a-snapshot-records">What a snapshot records</h3>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="p">{</span>
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span>
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
 </span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="w">  </span><span class="nt">"sources"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"module"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/srv/myapp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"relative_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"."</span><span class="p">,</span>
 </span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a><span class="w">               </span><span class="nt">"digest"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}],</span>
 </span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"database_connection"</span><span class="p">,</span><span class="w"> </span><span class="nt">"class_def"</span><span class="p">:</span><span class="w"> </span><span class="s2">"myapp.db:DatabaseConnection"</span><span class="p">,</span>
@@ -1945,14 +1957,21 @@ distribution, under this library's name (SWE-41). With it recorded, <code>export
 directory relative to its root package's own directory — <code>"."</code> when the filled module
 <em>is</em> the root, <code>"sub"</code> when <code>myapp.sub</code> was filled. Verification prefers the relative
 one, which is why a shipped snapshot still works.</p>
-<p><code>version</code> is 4. Format 2 added <code>relative_path</code>; format 3 changed how a digest is
+<p><code>version</code> is 5. Format 2 added <code>relative_path</code>; format 3 changed how a digest is
 computed — the records inside it are framed, and symlinked subpackages are followed — so
 the same unchanged tree hashes to a different value than it did before; format 4 added
-<code>provisional</code>. Each is a reason to move the version rather than change behaviour quietly:
-a sweet_tea that predates any of them refuses a newer file outright and says so, instead
-of ignoring what it does not know and reaching the wrong verdict. An older snapshot still
-parses here, but its digest was computed under the older rules, so verification will call
+<code>provisional</code>; format 5 widened the digest to every importable file rather than sources
+alone. Each is a reason to move the version rather than change behaviour quietly: a
+sweet_tea that predates any of them refuses a newer file outright and says so, instead of
+ignoring what it does not know and reaching the wrong verdict. An older snapshot still
+parses here, but its digest was computed under the older rules, so verification may call
 it stale; the answer either way is the one the error gives — re-export it.</p>
+<p>Format 5 is narrower than format 3 in what it disturbs. A tree of nothing but sources
+hashes exactly as it did, which is almost every tree, so almost no existing snapshot
+re-verifies as stale. What moves is the digest of a tree holding a compiled or sourceless
+module — and those were the digests that were wrong: before this, a tree holding a
+sourceless module and an otherwise identical tree without it hashed <em>identically</em>, so
+verification could not tell them apart at all.</p>
 <p>A format 3 or earlier snapshot read here records no provenance, so every name in it is
 read as a guess and <code>load</code> warns. That is the safe direction — a guess read as a request
 is the bug above — and it costs less than it sounds like: a guess is only overruled where
