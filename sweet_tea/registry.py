@@ -138,11 +138,23 @@ class Registry:
         """
         Get entries that are subclasses of the specified type.
 
+        Anything :func:`issubclass` accepts as its second argument may be asked for —
+        a class, a tuple of classes, a union. Whatever is accepted here is memoised,
+        and whatever is memoised is refreshed by :meth:`register`; the two tests are
+        the same test, which is the invariant SWE-43 exists to hold. They were not:
+        a tuple built a slot that nothing ever refreshed, so a tuple lookup answered
+        its first question forever.
+
         Args:
             lookup_type: The base class to filter by. Defaults to Any.
 
         Returns:
             List of entries where the class_def is a subclass of lookup_type.
+
+        Raises:
+            TypeError: When ``lookup_type`` is not something issubclass can test
+                against — a plain int, a tuple containing a non-class, a Protocol
+                that cannot be checked at runtime.
         """
         with cls.__lock:
             if lookup_type not in cls.__lookup_keys:
@@ -150,6 +162,16 @@ class Registry:
                     # Any matches everything - return all entries without filtering
                     slot = cls.__registry.copy()
                 else:
+                    # Probed against a class that is always available, so whether the
+                    # argument is usable is settled independently of what the registry
+                    # happens to hold. The comprehension below cannot settle it: over
+                    # an empty registry it never evaluates issubclass at all, so a
+                    # bogus argument memoised a slot and returned [] instead of
+                    # raising -- the same KeyError-instead-of-TypeError confusion
+                    # SWE-31 removed, surviving in the one case its fix could not see.
+                    # It also has to be settled before register() can trust the key,
+                    # since register applies issubclass to it on every registration.
+                    issubclass(object, lookup_type)
                     slot = [
                         filtered_type
                         for filtered_type in cls.__registry
@@ -225,12 +247,17 @@ class Registry:
                 # Refresh every previously-queried lookup slot whose type matches
                 # this class. Without this, ancestor-type slots cached before the
                 # registration go stale (see GH #6).
+                #
+                # The test is issubclass and nothing narrower. Gating on
+                # isinstance(lookup_type, type) first excluded every key that is not
+                # itself a class -- a tuple of classes, a union -- although
+                # typed_entries had happily built a slot for it, so such a slot was
+                # created once and then skipped by every registration after it
+                # (SWE-43). Safe without the guard because typed_entries establishes
+                # that a key it memoises is a usable second argument to issubclass
+                # before it memoises it.
                 for lookup_type in cls.__lookup_keys:
-                    if lookup_type is Any:
-                        cls.__lookup[lookup_type].append(new_entry)
-                    elif isinstance(lookup_type, type) and issubclass(
-                        class_def, lookup_type
-                    ):
+                    if lookup_type is Any or issubclass(class_def, lookup_type):
                         cls.__lookup[lookup_type].append(new_entry)
 
     @classmethod

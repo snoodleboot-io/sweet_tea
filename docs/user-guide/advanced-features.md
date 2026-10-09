@@ -229,6 +229,15 @@ logger.log("Hello, World!")  # Type-safe!
 - Typed entries maintain separate caches per type
 - Thread-safe operations use efficient RLock
 
+`Registry.typed_entries` accepts whatever `issubclass` accepts as its second argument —
+a class, a tuple of classes, a union, a runtime-checkable Protocol — and anything else
+is refused with `issubclass`'s own `TypeError` rather than memoised and answered with
+`[]`. Each accepted lookup gets a cache slot, and `register` refreshes every slot a new
+class belongs in. The two used to disagree: a tuple built a slot that the refresh then
+skipped, because the refresh only considered keys that were themselves classes, so a
+tuple lookup answered its first question forever (SWE-43). Whatever is accepted is
+cached, and whatever is cached is refreshed.
+
 ## Integration Patterns
 
 ### Dependency Injection

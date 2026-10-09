@@ -424,7 +424,7 @@ the exact variation matches first. When a returned object surprises you, check
 | Reuse one instance per key | `SingletonFactory.create(key=Cls.__name__)` |
 | Disambiguate two same-named classes | add `library="liba"` and/or `label="prod"` |
 | See everything registered | `Registry.entries()` |
-| See what a base type matches | `Registry.typed_entries(lookup_type=Base)` |
+| See what a base type matches | `Registry.typed_entries(lookup_type=Base)` — also a tuple, a union, or a runtime-checkable Protocol |
 | Reset between tests | `Registry._Registry__registry.clear()` + `__lookup` + `__lookup_keys`; `SingletonFactory.clear()` |
 | Drop one cached singleton | `SingletonFactory.pop(key="Cls")`, plus `library=`/`label=` if the entry needed them |
 | Catch any failure | `except SweetTeaError` |
