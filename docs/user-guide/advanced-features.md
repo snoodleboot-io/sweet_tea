@@ -293,11 +293,28 @@ And these genuinely differ, so they warn:
   instance was built from, and no `SweetTeaError` is raised for it either, since nothing
   is constructed.
 
-Where drift cannot be judged, nothing is said: a configuration holding values whose
-comparison is not a plain boolean — a numpy array, say — or one that could not be
-reduced to keyword arguments at all. A value that cannot be deep-copied, such as a lock
-or an open file, is kept by reference instead, so it is compared as it is then; every
-other value in the configuration is still snapshotted.
+Where drift cannot be judged, nothing is said:
+
+- A configuration holding values whose comparison is not a plain boolean — a numpy
+  array, say — or one that could not be reduced to keyword arguments at all.
+- A configuration a declared `__configuration__` cannot be *applied* to, because a
+  validator raised something other than a validation error — an `AttributeError` on a
+  value of a type it did not expect, for instance. That is evidence about the validator
+  and none about the configuration, so there is no verdict to give. Note the difference
+  from the rejected configuration above, which warns: pydantic refusing a value is the
+  schema's considered answer, while a validator breaking is not an answer at all. On a
+  cache hit neither one raises out of `create()` — the caller asked for an instance that
+  already exists and gets it.
+
+A value that cannot be deep-copied, such as a lock or an open file, is kept by reference
+instead, so it is compared as it is then; every other value in the configuration is
+still snapshotted.
+
+Judging drift applies any declared `__configuration__`, so a validator with a side
+effect can observe it. It runs once per `create()` at most: once for a call that
+constructs, whose comparison basis reuses what construction validated, and once for a
+cache hit that was passed a configuration to judge. A cache hit passed no configuration,
+or an empty one, asks no question and runs no validator at all.
 
 Use `Factory` when each caller needs its own configuration, or
 `SingletonFactory.pop(key)` to discard the cached instance before building a new one.

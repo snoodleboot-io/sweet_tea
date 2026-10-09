@@ -387,8 +387,18 @@ the exact variation matches first. When a returned object surprises you, check
   is reported on the next call rather than silently rewriting what the first
   call is recorded as having asked for. Absent a declared schema, `1`, `1.0` and
   `True` are different requests. Where the comparison is undecidable — a value
-  whose `==` is not boolean, a still-lazy entry — nothing is said and nothing is
-  raised. Judging drift imports nothing and resolves nothing.
+  whose `==` is not boolean, a still-lazy entry, a validator that raised something
+  other than a validation error — nothing is said and nothing is raised. A
+  configuration the declared schema *rejects* is decidably different and does
+  warn: the cached instance's configuration validated and this one does not.
+  Judging drift imports nothing and resolves nothing.
+- **A declared `__configuration__` is applied at most once per `create()`**: a
+  constructing call validates once and builds from that same validated model,
+  and a cache hit validates once only if you passed a configuration for it to
+  judge. Fetching an existing singleton with no configuration runs none of your
+  validators. Do not rely on a validator's side effect firing a fixed number of
+  times; do not make one that cannot tolerate running on a value the cached
+  instance was not built from.
 
 ---
 
