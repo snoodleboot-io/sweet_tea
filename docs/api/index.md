@@ -10,4 +10,5 @@ Full API documentation auto-generated from source docstrings.
 | [AbstractInverterFactory](abstract-inverter-factory.md) | Inversion-capable abstract factory base |
 | [InverterFactory](inverter-factory.md) | Factory supporting dependency inversion |
 | [SingletonFactory](singleton-factory.md) | Lazy singleton factory with caching |
+| [AbstractSingletonFactory](abstract-singleton-factory.md) | Type-safe singleton factory with generic constraints |
 | [Entry](entry.md) | Registry entry data model |
