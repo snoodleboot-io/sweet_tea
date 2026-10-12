@@ -76,6 +76,7 @@ nav:
       - Abstract Inverter Factory: api/abstract-inverter-factory.md
       - Inverter Factory: api/inverter-factory.md
       - Singleton Factory: api/singleton-factory.md
+      - Abstract Singleton Factory: api/abstract-singleton-factory.md
       - Entry: api/entry.md
   - Development:
       - Contributing: development/contributing.md

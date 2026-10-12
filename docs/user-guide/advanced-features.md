@@ -85,6 +85,63 @@ old_cache = SingletonFactory.pop("cache")        # Returns and removes instance
 SingletonFactory.clear()                         # Remove all cached instances
 ```
 
+### A singleton that arrives typed
+
+`SingletonFactory` returns `Any`, so a caller wanting "the one instance registered under
+this key, and it must be a `MyBase`" used to have to give up either the caching or the
+narrowing. `AbstractSingletonFactory[T]` is both:
+
+```python
+from sweet_tea.abstract_singleton_factory import AbstractSingletonFactory
+
+store = AbstractSingletonFactory[ObjectStore].create("s3objectstore")
+# Narrowed to subclasses of ObjectStore, cached for the process, and typed as
+# ObjectStore rather than Any.
+```
+
+The instance cache is **shared** with `SingletonFactory`, deliberately. The guarantee is
+one instance per key for the process, so a key reached through the typed factory and the
+same key reached through the untyped one give the same object; two caches would mean two
+singletons of one key. `clear()` and `pop()` therefore act on that one shared cache, and
+two parameterizations that both accept a class agree on its instance.
+
+What the narrowing adds is the type, not the protection: the `library` filter already
+refused to return a foreign class silently. What was lost was the static type, which is
+the thing `AbstractFactory[T]` exists to avoid losing.
+
+`list_keys()` is inherited unchanged and still lists the whole registry rather than the
+subset a parameterization would accept. Narrowing it would answer `[]` for a lazily
+filled registry, since an unresolved entry cannot answer `issubclass`; ask
+`Registry.typed_candidates()` for that enumeration instead.
+
+### Singletons and event loops
+
+**The guarantee is one instance per key per process, not per event loop.** That costs
+nothing for an ordinary component and is the whole problem for one holding an asyncio
+resource, so it is worth stating plainly.
+
+An asyncio client — an aiohttp session, a database pool — is bound to the event loop that
+created it, and using it from another loop is undefined. The factory caches one instance
+and hands it to every caller, so a process running several loops — a thread pool where
+each worker calls `asyncio.run`, a test suite starting a fresh loop per test, a sync
+entry point calling `asyncio.run` more than once — shares one loop-bound resource across
+all of them. Nothing in the factory can detect this: it sees a key and a class, not which
+loop a constructor's resources belong to.
+
+A component holding a loop-bound resource is responsible for its own affinity. The usual
+shape is to hold no loop-bound state at construction and to acquire the client lazily,
+per running loop, inside the component: one component per key, as intended, with one
+client per loop underneath it.
+
+The locking is not the gap, which is worth separating out because the two get conflated.
+The locks are thread locks, and a thread lock does not serialise two coroutines on one
+loop — but it does not have to, because no lock is held across a suspension point. The
+factory's lock is released before a constructor runs, and a constructor is synchronous,
+so two coroutines on one loop cannot interleave inside a critical section. Calling these
+factories from a coroutine is safe. An `asyncio.Lock` would serialise coroutines and not
+threads, which is the wrong trade for a process-wide cache. What locking cannot do is
+make a loop-bound object safe to use from another loop.
+
 ## Modules That Will Not Import
 
 A fill walks a tree and imports what it finds, and some of what it finds cannot be

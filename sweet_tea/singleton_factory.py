@@ -60,6 +60,38 @@ class SingletonFactory(BaseFactory):
     — ask for a singleton whose construction it is already inside. That is a circular
     dependency, and this factory reports it as a :class:`SweetTeaError` naming the
     cycle rather than blocking on a lock that can never be released (SWE-36).
+
+    **The guarantee is one instance per key per process, not per event loop** (SWE-47).
+    That distinction costs nothing for an ordinary component and is the whole problem
+    for one holding an asyncio resource, so it is stated here rather than discovered.
+
+    An asyncio client — an aiohttp session, a database pool — is bound to the event loop
+    that created it, and using it from a different loop is undefined. This factory
+    caches one instance for the process and hands that same instance to every caller, so
+    a process running several event loops — a thread pool where each worker runs its own
+    ``asyncio.run``, a test suite that starts a fresh loop per test, a sync entry point
+    calling ``asyncio.run`` more than once — gets one loop-bound resource shared across
+    all of them. Nothing here can detect that: the factory sees a key and a class, not
+    which loop a constructor's resources belong to.
+
+    A component holding a loop-bound resource is therefore responsible for its own
+    affinity. The usual shape is to let the singleton hold no loop-bound state at
+    construction and to acquire the client lazily, per running loop, inside the
+    component — which keeps one component per key, as intended, with one client per loop
+    underneath it.
+
+    The locking is not the gap, which is worth saying because the two get conflated. The
+    locks here are thread locks, and a thread lock does not serialise two coroutines on
+    one loop — but it does not have to, because no lock is ever held across a suspension
+    point: the factory's own lock is released before a constructor runs, and a
+    constructor is synchronous, so two coroutines on one loop cannot interleave inside a
+    critical section. Calling this factory from a coroutine is safe. An
+    :class:`asyncio.Lock` would serialise coroutines and *not* threads, which is the
+    wrong trade for a process-wide cache, since threads are what can genuinely race it.
+    What the locking cannot do is make a loop-bound object safe to use from another loop.
+
+    A caller who wants one instance per loop rather than one per process wants a
+    different cache key, and that is not what this class offers today.
     """
 
     # Threading lock for synchronizing operations
