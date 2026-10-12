@@ -164,7 +164,16 @@ class TestSnapshotRoundTrip(TestCase):
         for written in payload["entries"]:
             self.assertEqual(
                 set(written),
-                {"key", "class_def", "library", "label", "provisional"},
+                {
+                    "key",
+                    "class_def",
+                    "library",
+                    "label",
+                    "provisional",
+                    # Carried so a loaded registry can still answer a type question
+                    # without importing the tree (SWE-46).
+                    "declared_bases",
+                },
             )
             # SnapshotEntry.class_def is the module:attribute string, not a class.
             self.assertIsInstance(written["class_def"], str)

@@ -157,6 +157,17 @@ class Entry(BaseModel):
         ),
     )
 
+    declared_bases: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Base names the source declared for this class, recorded by a lazy scan "
+            "so a type question can be asked before the module is imported. Empty "
+            "for an eager entry, which holds the real class and needs no "
+            "approximation of it"
+        ),
+        examples=[("ObjectStore",), ("BaseModel", "Mixin")],
+    )
+
     @property
     def is_lazy(self) -> bool:
         """

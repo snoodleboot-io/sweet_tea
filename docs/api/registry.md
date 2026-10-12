@@ -16,6 +16,10 @@
 
 ::: sweet_tea.registry.Registry.typed_entries
 
+### `typed_candidates()`
+
+::: sweet_tea.registry.Registry.typed_candidates
+
 ### `fill_registry()`
 
 ::: sweet_tea.registry.Registry.fill_registry

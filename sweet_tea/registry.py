@@ -24,7 +24,7 @@ import warnings
 from collections.abc import Iterable
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, get_args
 
 from sweet_tea.audit_finding import AuditFinding
 from sweet_tea.entry import Entry, set_resolver
@@ -196,6 +196,193 @@ class Registry:
             return cls.__lookup[lookup_type].copy()
 
     @classmethod
+    def typed_candidates(cls, lookup_type: Any = Any) -> list[Entry]:
+        """
+        Get entries that are, or plausibly are, subclasses of a type — importing none.
+
+        :meth:`typed_entries` can only answer for an entry whose class it holds, so on
+        a lazily filled tree it answers "none" until something resolves each entry by
+        key. Resolving happens by key, so a caller holding only a type has nothing to
+        resolve from, and "which backends are registered for this ABC" was
+        unanswerable without importing every one of them — which is what lazy filling
+        exists to avoid (SWE-46).
+
+        This answers it from the base names the scanner read out of the source, so a
+        resolved entry is reported on the strength of a real :func:`issubclass` and an
+        unresolved one on the strength of its declared bases. Use :attr:`Entry.is_lazy`
+        to tell which is which: a lazy entry here is a **candidate**, not a promise.
+
+        Intended for enumeration — listing the keys a type offers, validating
+        configuration against them, building a menu. It is not what the factories use
+        and not a substitute for :meth:`typed_entries`, whose guarantee is unchanged:
+        every entry it returns holds a class that really is a subclass. Creating
+        through a type-constrained factory resolves the key first and then filters on
+        the real class, so a candidate that turns out not to be a subclass is refused
+        there rather than built.
+
+        **What it can miss.** A declared base is a name, and names are not classes:
+
+        - A base defined outside the scanned tree ends the chain, so inheritance that
+          passes through another library is invisible beyond the first hop.
+        - A base no name describes — ``make_base()``, ``bases[0]`` — is not recorded,
+          so the entry is not a candidate for anything.
+        - A lazy entry registered by hand reports no bases unless the caller passed
+          ``declared_bases`` to :meth:`register_lazy`.
+
+        Missing is the deliberate failure, not over-reporting. Including an entry whose
+        chain could not be followed would mean including nearly every lazy entry in a
+        tree, since most bases come from another module, and an answer that lists
+        everything answers nothing. Nothing is built off the back of this, so a miss
+        costs a listing an item rather than costing a caller a wrong object.
+
+        Deliberately **not** memoised, unlike :meth:`typed_entries`. That cache is
+        keyed by ``lookup_type`` alone and :meth:`register` refreshes every key in it;
+        a key that also carried "and include the unresolved ones" would have to be a
+        tuple, which is already a legal ``lookup_type``, so one slot would end up
+        serving two different questions — the fault SWE-43 removed. Enumeration is a
+        cold path, so it recomputes instead.
+
+        Args:
+            lookup_type: The base class to filter by. Defaults to Any, which returns
+                every entry, resolved or not.
+
+        Returns:
+            Entries that hold a subclass, plus unresolved entries whose declared bases
+            reach the type, in registration order.
+
+        Raises:
+            TypeError: When ``lookup_type`` is not something issubclass can test
+                against, matching :meth:`typed_entries` rather than failing later or
+                differently.
+        """
+        with cls.__lock:
+            if lookup_type is Any:
+                return cls.__registry.copy()
+
+            # Settled against a class that is always available, exactly as
+            # typed_entries settles it, so both report the same TypeError for the same
+            # argument instead of one of them raising and the other returning [].
+            issubclass(object, lookup_type)
+
+            target_names = cls.__type_names(lookup_type)
+
+            # Both indexes are built from the stored class object and the recorded
+            # names, never from Entry.class_def: this method's whole promise is that
+            # asking a type question imports nothing.
+            declared = {
+                entry.attribute: entry.declared_bases
+                for entry in cls.__registry
+                if entry.is_lazy and entry.attribute and entry.declared_bases
+            }
+            resolved: dict[str, list[type]] = {}
+            for entry in cls.__registry:
+                if entry.class_object is None:
+                    continue
+                for name in {
+                    entry.attribute,
+                    getattr(entry.class_object, "__name__", ""),
+                }:
+                    if name:
+                        resolved.setdefault(name, []).append(entry.class_object)
+
+            candidates = []
+            for entry in cls.__registry:
+                if entry.class_object is not None:
+                    if issubclass(entry.class_object, lookup_type):
+                        candidates.append(entry)
+                elif cls.__plausibly_reaches(
+                    entry, lookup_type, target_names, declared, resolved
+                ):
+                    candidates.append(entry)
+            return candidates
+
+    @classmethod
+    def __type_names(cls, lookup_type: Any) -> frozenset[str]:
+        """
+        The class names a lookup type is spelled with, for matching declared bases.
+
+        A declared base can only be compared against a name, so the requested type has
+        to be reduced to the names that would satisfy it. A plain class contributes its
+        own; a tuple or a union contributes each member's, because satisfying any one
+        of them satisfies the query the way :func:`issubclass` does.
+
+        Args:
+            lookup_type: Whatever was asked for, already known to be usable.
+
+        Returns:
+            Every name that would satisfy the query, empty when none can be read —
+            in which case no unresolved entry is reported, which is the conservative
+            answer rather than a wrong one.
+        """
+        if isinstance(lookup_type, type):
+            name = getattr(lookup_type, "__name__", "")
+            return frozenset({name}) if name else frozenset()
+
+        members = (
+            lookup_type if isinstance(lookup_type, tuple) else get_args(lookup_type)
+        )
+        names: set[str] = set()
+        for member in members:
+            names |= cls.__type_names(member)
+        return frozenset(names)
+
+    @classmethod
+    def __plausibly_reaches(
+        cls,
+        entry: Entry,
+        lookup_type: Any,
+        target_names: frozenset[str],
+        declared: dict[str, tuple[str, ...]],
+        resolved: dict[str, list[type]],
+    ) -> bool:
+        """
+        Whether an unresolved entry's declared bases reach the requested type.
+
+        Args:
+            entry: The unresolved entry being judged.
+            lookup_type: The requested type, for testing a base that turns out to name
+                a class the registry already holds.
+            target_names: Names that would satisfy the query.
+            declared: Attribute name -> declared base names, over the unresolved
+                entries.
+            resolved: Name -> classes the registry already holds under it.
+
+        Returns:
+            True when the entry is a candidate.
+        """
+        if not target_names:
+            return False
+
+        # issubclass is reflexive, so the type itself is one of its own answers and an
+        # entry registering it belongs in the result exactly as typed_entries puts it
+        # there once resolved.
+        if entry.attribute in target_names:
+            return True
+
+        pending = list(entry.declared_bases)
+        seen: set[str] = set()
+        while pending:
+            base = pending.pop()
+            if base in target_names:
+                return True
+            if base in seen:
+                # A recorded graph can name a cycle even though Python cannot build
+                # one -- two guarded blocks each defining the other's base is enough.
+                continue
+            seen.add(base)
+
+            # A base that names a class the registry already holds is settled for
+            # real rather than by name, which is both stricter and able to follow
+            # inheritance out of the scanned tree by one hop.
+            for class_object in resolved.get(base, ()):
+                if issubclass(class_object, lookup_type):
+                    return True
+
+            pending.extend(declared.get(base, ()))
+
+        return False
+
+    @classmethod
     def register(
         cls,
         key: str,
@@ -269,6 +456,7 @@ class Registry:
         library: str = "",
         label: str = "",
         provisional: bool = False,
+        declared_bases: Iterable[str] | str = (),
     ) -> None:
         """
         Register a class by name, deferring its module's import until first use.
@@ -298,12 +486,25 @@ class Registry:
                 module is imported; an explicit registration is a request, so it is
                 kept (SWE-20). Callers outside this class leave it False, which is
                 what makes an alias survive resolution.
+            declared_bases: Base names the source declares for the class, when they
+                were read. They are what lets :meth:`typed_candidates` answer a type
+                question about this entry while it is still unresolved (SWE-46).
+                Omitted, the entry simply is not a candidate for any type until it
+                resolves, which is how every lazy entry behaved before. A single name
+                may be given as a bare string, which is read as that one base rather
+                than iterated into its letters — the same courtesy
+                :meth:`fill_registry` extends to ``eager``.
         """
         new_entry = Entry(
             key=key.lower(),
             module=module,
             attribute=attribute,
             provisional=provisional,
+            declared_bases=(
+                (declared_bases,)
+                if isinstance(declared_bases, str)
+                else tuple(declared_bases)
+            ),
             library=library.lower(),
             label=label.lower(),
         )
@@ -521,6 +722,10 @@ class Registry:
                         # when the module is imported, so it has to be written down.
                         # Without it every guess came back as a request (SWE-41).
                         provisional=entry.provisional,
+                        # A snapshot is read in a process that scanned nothing, so the
+                        # bases have to travel or a loaded registry cannot answer a
+                        # type question it could answer before export (SWE-46).
+                        declared_bases=entry.declared_bases,
                     )
                 )
 
@@ -628,6 +833,7 @@ class Registry:
                     library=snapshot_entry.library,
                     label=snapshot_entry.label,
                     provisional=snapshot_entry.provisional,
+                    declared_bases=snapshot_entry.declared_bases,
                 )
                 touched.add(
                     (
@@ -1456,7 +1662,7 @@ class Registry:
             source_file: Path to the module's source.
         """
         try:
-            attributes = LazyScanner.scan_file(source_file)
+            attributes = LazyScanner.scan_file_detailed(source_file)
         except SweetTeaError as error:
             if isinstance(error.__cause__, OSError):
                 cls.__logger.debug(
@@ -1472,7 +1678,7 @@ class Registry:
             cls.__skip_module(name_of_package, error.__cause__ or error)
             return
 
-        for attribute in attributes:
+        for attribute, scanned in attributes.items():
             cls.register_lazy(
                 key=attribute.lower(),
                 module=name_of_package,
@@ -1480,6 +1686,9 @@ class Registry:
                 library=library,
                 label=label,
                 provisional=True,
+                # Carried from the scan so a type question can be asked about this
+                # tree before anything in it is imported (SWE-46).
+                declared_bases=scanned.bases,
             )
 
         with cls.__lock:
