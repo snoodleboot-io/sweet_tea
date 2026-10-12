@@ -558,6 +558,58 @@ Two things to know:
 `Registry.resolve_all()` still materialises everything at once when that is what you
 want.
 
+### Asking a type question before anything is imported
+
+`typed_entries` can only answer for an entry whose class it holds, so on a lazily
+filled tree it answers `[]` until something resolves each entry — and resolving happens
+by *key*, so a caller holding only a type has nothing to resolve from. Enumerating
+"which keys are registered for this ABC" therefore meant importing the whole tree, which
+is the cost `lazy=True` exists to avoid.
+
+`Registry.typed_candidates(SomeBase)` answers it from the base names the scanner read
+out of the source, importing nothing:
+
+```python
+Registry.fill_registry(lazy=True)
+
+# Lists every backend registered under the ABC. No module is imported.
+for entry in Registry.typed_candidates(ObjectStore):
+    print(entry.key, "(unresolved)" if entry.is_lazy else "(resolved)")
+
+# Building one imports only that backend's module.
+store = AbstractFactory[ObjectStore].create("s3objectstore")
+```
+
+A resolved entry is reported on the strength of a real `issubclass`; an unresolved one
+is reported on the strength of its declared bases, so it is a **candidate**, not a
+promise. `entry.is_lazy` tells you which you are looking at.
+
+The base names are normalised, so the usual spellings all match: a base renamed on
+import is reported under the name it was defined with, a dotted reference under its last
+segment, a generic base without its subscript, and a chain through other classes in the
+same tree is followed to the end. A base naming a class the registry already holds is
+settled against the real class instead, which follows inheritance one hop out of the
+tree.
+
+What it misses, and why that is the safe direction:
+
+- A base defined outside the scanned tree ends the chain, so inheritance passing through
+  another library is invisible beyond that first hop.
+- A base no name describes — `make_base()`, `bases[0]` — is not recorded, so the entry
+  is a candidate for nothing. Pass `declared_bases=` to `register_lazy` to say what it
+  inherits when you know.
+- Over-reporting was the alternative and is worse: most bases come from another module,
+  so including every entry whose chain could not be followed would list nearly the whole
+  tree, and an answer that lists everything answers nothing.
+
+Nothing is constructed off the back of this. `typed_entries` keeps its guarantee
+unchanged — every entry it returns holds a class that really is a subclass — and the
+type-constrained factories resolve the key first and then filter on the real class, so a
+candidate that turns out not to be a subclass is refused there rather than built. Unlike
+`typed_entries`, `typed_candidates` is not cached: enumeration is a cold path, and a
+second cache keyed by type plus a flag would collide with the tuple lookups that type
+slots already support.
+
 ### Adopting it
 
 Lazy filling assumes nothing needs the registry to be complete *while modules are still

@@ -30,6 +30,17 @@ class SnapshotEntry(BaseModel):
     is finally imported. A scanned name is a guess and loses to discovery; an explicit
     registration is a request and is kept (SWE-20). Leaving it out of the written form
     made every guess come back as a request, which is the whole of SWE-41.
+
+    ``declared_bases`` travels for a smaller reason: it is what
+    :meth:`~sweet_tea.registry.Registry.typed_candidates` reads, and a snapshot is
+    precisely the case where nothing has been scanned in this process, so dropping it
+    would leave a loaded registry unable to answer a type question it could answer
+    before being written (SWE-46). The format version does not move for it. By the rule
+    :class:`~sweet_tea.registry_snapshot.RegistrySnapshot` sets, a version moves when an
+    older reader would reach a *different verdict*, and this field only ever adds
+    candidates: a reader that ignores it answers exactly as it did before, and a new
+    reader given an older file finds no bases recorded and reports no unresolved
+    candidate — which is that file's honest content, not a wrong answer about it.
     """
 
     key: str = Field(
@@ -52,6 +63,15 @@ class SnapshotEntry(BaseModel):
             "True when the name was read out of source rather than asked for, so "
             "discovery overrules it once the module is imported"
         ),
+    )
+
+    declared_bases: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Base names the source declared for the class, carried so a type "
+            "question can be answered without importing anything"
+        ),
+        examples=[("ObjectStore",)],
     )
 
     @property

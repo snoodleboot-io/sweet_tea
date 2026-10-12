@@ -109,6 +109,9 @@ class TestEntrySerialisation(TestCase):
                 "module": "builtins",
                 "attribute": "dict",
                 "provisional": False,
+                # Empty for an eager entry: it holds the real class, so it needs no
+                # source-level approximation of the class's bases (SWE-46).
+                "declared_bases": (),
             },
         )
 
